@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# NPM dependencies
+node_modules
+npm-debug.log
+
+# Build artifacts
+dist
+
+# Tests
+coverage
+.nyc_output
+test
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Logs
+logs
+*.log
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Other
+*.md
+LICENSE

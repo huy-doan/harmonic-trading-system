@@ -1,0 +1,39 @@
+// 183. tsconfig.json
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": true,
+    "removeComments": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2021",
+    "sourceMap": true,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "incremental": true,
+    "skipLibCheck": true,
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "strictBindCallApply": false,
+    "forceConsistentCasingInFileNames": false,
+    "noFallthroughCasesInSwitch": false,
+    "paths": {
+      "@config/*": ["src/config/*"],
+      "@shared/*": ["src/shared/*"],
+      "@domain/*": ["src/domain/*"],
+      "@infrastructure/*": ["src/infrastructure/*"],
+      "@helpers/*": ["src/helpers/*"],
+      "@libs/*": ["src/libs/*"],
+      "@utils/*": ["src/shared/utils/*"],
+      "@filters/*": ["src/shared/filters/*"],
+      "@middlewares/*": ["src/shared/middlewares/*"],
+      "@interceptors/*": ["src/shared/interceptors/*"],
+      "@decorators/*": ["src/shared/decorators/*"],
+      "@exceptions/*": ["src/shared/exceptions/*"],
+      "@pipes/*": ["src/shared/pipes/*"],
+      "@interfaces/*": ["src/shared/interfaces/*"],
+      "@constants/*": ["src/shared/constants/*"]
+    }
+  }
+}

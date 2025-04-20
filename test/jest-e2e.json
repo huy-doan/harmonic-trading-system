@@ -1,0 +1,26 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testEnvironment": "node",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@config/(.*)$": "<rootDir>/../src/config/$1",
+    "^@shared/(.*)$": "<rootDir>/../src/shared/$1",
+    "^@domain/(.*)$": "<rootDir>/../src/domain/$1",
+    "^@infrastructure/(.*)$": "<rootDir>/../src/infrastructure/$1",
+    "^@helpers/(.*)$": "<rootDir>/../src/helpers/$1",
+    "^@libs/(.*)$": "<rootDir>/../src/libs/$1",
+    "^@utils/(.*)$": "<rootDir>/../src/shared/utils/$1",
+    "^@filters/(.*)$": "<rootDir>/../src/shared/filters/$1",
+    "^@middlewares/(.*)$": "<rootDir>/../src/shared/middlewares/$1",
+    "^@interceptors/(.*)$": "<rootDir>/../src/shared/interceptors/$1",
+    "^@decorators/(.*)$": "<rootDir>/../src/shared/decorators/$1",
+    "^@exceptions/(.*)$": "<rootDir>/../src/shared/exceptions/$1",
+    "^@pipes/(.*)$": "<rootDir>/../src/shared/pipes/$1",
+    "^@interfaces/(.*)$": "<rootDir>/../src/shared/interfaces/$1",
+    "^@constants/(.*)$": "<rootDir>/../src/shared/constants/$1"
+  }
+}
