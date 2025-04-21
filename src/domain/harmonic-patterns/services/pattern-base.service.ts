@@ -8,6 +8,7 @@ import { PatternPoint } from '../entities/pattern-point.entity';
 import { Candlestick } from '@libs/candlestick/Candlestick';
 import { FibonacciHelper } from '@shared/utils/fibonacci.helper';
 import { HarmonicPatternRatios, isRatioValid, calculateRatioQuality } from '../interfaces/pattern-ratio.interface';
+import { UpdatePatternDto } from '../dtos/pattern.dto';
 
 @Injectable()
 export abstract class PatternBaseService {
@@ -436,7 +437,7 @@ export abstract class PatternBaseService {
   /**
    * Update pattern status
    */
-  async updatePatternStatus(id: string, updates: Partial<HarmonicPattern>): Promise<HarmonicPattern> {
+  async updatePatternStatus(id: string, updates: Partial<UpdatePatternDto>): Promise<HarmonicPattern> {
     await this.patternRepository.update(id, updates);
     return this.findPatternById(id);
   }
