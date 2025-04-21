@@ -9,7 +9,7 @@ dotenv.config();
 /**
  * Configuration for TypeORM CLI
  */
-export const typeOrmConfig: DataSourceOptions = {
+export const typeOrmAsyncConfig: DataSourceOptions = {
   type: 'postgres',
   host: process.env.POSTGRES_HOST || 'localhost',
   port: parseInt(process.env.POSTGRES_PORT, 10) || 5432,
@@ -33,5 +33,5 @@ export const typeOrmConfig: DataSourceOptions = {
 /**
  * DataSource for TypeORM CLI - used for migrations
  */
-const dataSource = new DataSource(typeOrmConfig);
+const dataSource = new DataSource(typeOrmAsyncConfig);
 export default dataSource;
