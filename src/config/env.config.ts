@@ -1,95 +1,64 @@
-// 006. src/config/env.config.ts
-import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, IsString, validateSync } from 'class-validator';
+import { z } from 'zod';
 
-enum Environment {
-  Development = 'development',
-  Production = 'production',
-  Test = 'test',
-}
+/**
+ * Định nghĩa schema xác thực cho biến môi trường
+ */
+const envSchema = z.object({
+  // API Configuration
+  API_PORT: z.string().transform(Number),
+  API_HOST: z.string(),
+  API_PREFIX: z.string(),
+  API_VERSION: z.string(),
+  NODE_ENV: z.enum(['development', 'production', 'test']),
 
-class EnvironmentVariables {
-  @IsEnum(Environment)
-  NODE_ENV: Environment;
+  // Database Configuration
+  POSTGRES_HOST: z.string(),
+  POSTGRES_PORT: z.string().transform(Number),
+  POSTGRES_USER: z.string(),
+  POSTGRES_PASSWORD: z.string(),
+  POSTGRES_DB: z.string(),
 
-  @IsNumber()
-  API_PORT: number;
+  // Redis Configuration
+  REDIS_HOST: z.string(),
+  REDIS_PORT: z.string().transform(Number),
+  REDIS_PASSWORD: z.string(),
 
-  @IsString()
-  API_HOST: string;
+  // JWT Configuration
+  JWT_SECRET: z.string(),
+  JWT_EXPIRATION: z.string().transform(Number),
 
-  @IsString()
-  API_PREFIX: string;
+  // Binance API Configuration
+  BINANCE_API_KEY: z.string(),
+  BINANCE_API_SECRET: z.string(),
 
-  @IsString()
-  API_VERSION: string;
+  // Telegram Configuration
+  TELEGRAM_BOT_TOKEN: z.string(),
+  TELEGRAM_CHAT_ID: z.string(),
 
-  @IsString()
-  POSTGRES_HOST: string;
+  // OpenAI Configuration
+  OPENAI_API_KEY: z.string(),
 
-  @IsNumber()
-  POSTGRES_PORT: number;
+  // // Rate Limiting
+  // THROTTLE_TTL: z.string().transform(Number),
+  // THROTTLE_LIMIT: z.string().transform(Number),
+});
 
-  @IsString()
-  POSTGRES_USER: string;
+/**
+ * Xác thực và lấy các biến môi trường
+ */
+export const env = envSchema.parse(process.env);
 
-  @IsString()
-  POSTGRES_PASSWORD: string;
+/**
+ * Kiểm tra xem môi trường hiện tại có phải là môi trường production hay không
+ */
+export const isProduction = env.NODE_ENV === 'production';
 
-  @IsString()
-  POSTGRES_DB: string;
+/**
+ * Kiểm tra xem môi trường hiện tại có phải là môi trường development hay không
+ */
+export const isDevelopment = env.NODE_ENV === 'development';
 
-  @IsString()
-  @IsOptional()
-  REDIS_HOST: string;
-
-  @IsNumber()
-  @IsOptional()
-  REDIS_PORT: number;
-
-  @IsString()
-  @IsOptional()
-  REDIS_PASSWORD: string;
-
-  @IsString()
-  @IsOptional()
-  JWT_SECRET: string;
-
-  @IsNumber()
-  @IsOptional()
-  JWT_EXPIRATION: number;
-}
-
-export function validateEnv(config: Record<string, unknown>) {
-  const validatedConfig = plainToInstance(
-    EnvironmentVariables,
-    {
-      NODE_ENV: process.env.NODE_ENV,
-      API_PORT: parseInt(process.env.API_PORT, 10),
-      API_HOST: process.env.API_HOST,
-      API_PREFIX: process.env.API_PREFIX,
-      API_VERSION: process.env.API_VERSION,
-      POSTGRES_HOST: process.env.POSTGRES_HOST,
-      POSTGRES_PORT: parseInt(process.env.POSTGRES_PORT, 10),
-      POSTGRES_USER: process.env.POSTGRES_USER,
-      POSTGRES_PASSWORD: process.env.POSTGRES_PASSWORD,
-      POSTGRES_DB: process.env.POSTGRES_DB,
-      REDIS_HOST: process.env.REDIS_HOST,
-      REDIS_PORT: process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : undefined,
-      REDIS_PASSWORD: process.env.REDIS_PASSWORD,
-      JWT_SECRET: process.env.JWT_SECRET,
-      JWT_EXPIRATION: process.env.JWT_EXPIRATION ? parseInt(process.env.JWT_EXPIRATION, 10) : undefined,
-    },
-    { enableImplicitConversion: true },
-  );
-
-  const errors = validateSync(validatedConfig, {
-    skipMissingProperties: false,
-  });
-
-  if (errors.length > 0) {
-    throw new Error(errors.toString());
-  }
-  
-  return validatedConfig;
-}
+/**
+ * Kiểm tra xem môi trường hiện tại có phải là môi trường test hay không
+ */
+export const isTest = env.NODE_ENV === 'test';

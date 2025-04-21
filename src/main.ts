@@ -1,27 +1,29 @@
-// 001. src/main.ts
+// 003. src/main.ts
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { WinstonModule } from 'nest-winston';
+import { AppModule } from './app.module';
+import { createLogger } from '@config/logging.config';
+import { applyRateLimiting } from '@config/rate-limit.config';
 import { setupSwagger } from '@config/swagger.config';
-import { HttpExceptionFilter } from '@filters/http-exception.filter';
-import { LoggerMiddleware } from '@middlewares/logger.middleware';
+import { APP_CONSTANTS } from '@config/const.config';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  
-  // Get ConfigService to access .env variables
+  const winstonLogger = createLogger();
+  const app = await NestFactory.create(AppModule, {
+    logger: WinstonModule.createLogger(winstonLogger),
+  });
+
   const configService = app.get(ConfigService);
   
-  // Set global prefix
-  const apiPrefix = configService.get<string>('API_PREFIX');
-  const apiVersion = configService.get<string>('API_VERSION');
-  app.setGlobalPrefix(`${apiPrefix}/${apiVersion}`);
-  
+  // Apply global prefix
+  app.setGlobalPrefix(configService.get('API_PREFIX', 'api'));
+
   // Enable CORS
   app.enableCors();
-  
-  // Apply global pipes
+
+  // Global validation pipe
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -29,22 +31,20 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-  
-  // Apply global filters
-  app.useGlobalFilters(new HttpExceptionFilter());
-  
-  // Apply global middleware
-  app.use(LoggerMiddleware);
-  
+
+  // Apply rate limiting
+  applyRateLimiting(app);
+
   // Setup Swagger documentation
   setupSwagger(app);
-  
-  // Start the server
-  const port = configService.get<number>('API_PORT') || 3000;
-  const host = configService.get<string>('API_HOST') || 'localhost';
-  
-  await app.listen(port, host);
-  console.log(`Application is running on: ${await app.getUrl()}`);
+
+  // Start listening
+  const port = configService.get('API_PORT', 3000);
+  await app.listen(port);
+
+  // Use NestJS Logger instead of WinstonModule directly
+  const logger = new Logger('Bootstrap');
+  logger.log(`${APP_CONSTANTS.APP_NAME} v${APP_CONSTANTS.APP_VERSION} is running on: ${await app.getUrl()}`);
 }
 
 bootstrap();

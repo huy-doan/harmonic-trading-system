@@ -1,20 +1,21 @@
-// 007. src/config/database.config.ts
-import { ConfigService } from '@nestjs/config';
+import { registerAs } from '@nestjs/config';
+import { env } from './env.config';
 
-export interface DatabaseConfig {
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  database: string;
-}
-
-export const getDatabaseConfig = (configService: ConfigService): DatabaseConfig => {
-  return {
-    host: configService.get<string>('POSTGRES_HOST'),
-    port: configService.get<number>('POSTGRES_PORT'),
-    username: configService.get<string>('POSTGRES_USER'),
-    password: configService.get<string>('POSTGRES_PASSWORD'),
-    database: configService.get<string>('POSTGRES_DB'),
-  };
-};
+/**
+ * Cấu hình cơ sở dữ liệu
+ */
+export const databaseConfig = registerAs('database', () => ({
+  type: 'postgres',
+  host: env.POSTGRES_HOST,
+  port: env.POSTGRES_PORT,
+  username: env.POSTGRES_USER,
+  password: env.POSTGRES_PASSWORD,
+  database: env.POSTGRES_DB,
+  entities: ['dist/**/*.entity{.ts,.js}'],
+  migrations: ['dist/infrastructure/database/migrations/*{.ts,.js}'],
+  migrationsRun: true,
+  synchronize: env.NODE_ENV === 'development',
+  logging: env.NODE_ENV === 'development',
+  keepConnectionAlive: true,
+  ssl: env.NODE_ENV === 'production',
+}));
