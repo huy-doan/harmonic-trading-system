@@ -1,95 +1,55 @@
-// 006. src/config/env.config.ts
-import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, IsString, validateSync } from 'class-validator';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModuleAsyncOptions, TypeOrmModuleOptions } from '@nestjs/typeorm';
+import { DataSource, DataSourceOptions } from 'typeorm';
+import { databaseConfig } from './database.config';
+import { join } from 'path';
+import { env, isDevelopment } from '@config/env.config';
 
-enum Environment {
-  Development = 'development',
-  Production = 'production',
-  Test = 'test',
-}
+/**
+ * Cấu hình TypeORM không đồng bộ
+ */
+export const typeOrmAsyncConfig: TypeOrmModuleAsyncOptions = {
+  imports: [ConfigModule.forFeature(databaseConfig)],
+  inject: [ConfigService],
+  useFactory: async (configService: ConfigService): Promise<TypeOrmModuleOptions> => {
+    const dbConfig = configService.get('database');
+    return dbConfig || typeOrmConfig; // Đảm bảo luôn trả về một đối tượng hợp lệ
+  },
+  dataSourceFactory: async (options: DataSourceOptions) => {
+    return new DataSource(options).initialize();
+  },
+};
 
-class EnvironmentVariables {
-  @IsEnum(Environment)
-  NODE_ENV: Environment;
-
-  @IsNumber()
-  API_PORT: number;
-
-  @IsString()
-  API_HOST: string;
-
-  @IsString()
-  API_PREFIX: string;
-
-  @IsString()
-  API_VERSION: string;
-
-  @IsString()
-  POSTGRES_HOST: string;
-
-  @IsNumber()
-  POSTGRES_PORT: number;
-
-  @IsString()
-  POSTGRES_USER: string;
-
-  @IsString()
-  POSTGRES_PASSWORD: string;
-
-  @IsString()
-  POSTGRES_DB: string;
-
-  @IsString()
-  @IsOptional()
-  REDIS_HOST: string;
-
-  @IsNumber()
-  @IsOptional()
-  REDIS_PORT: number;
-
-  @IsString()
-  @IsOptional()
-  REDIS_PASSWORD: string;
-
-  @IsString()
-  @IsOptional()
-  JWT_SECRET: string;
-
-  @IsNumber()
-  @IsOptional()
-  JWT_EXPIRATION: number;
-}
-
-export function validateEnv(config: Record<string, unknown>) {
-  const validatedConfig = plainToInstance(
-    EnvironmentVariables,
-    {
-      NODE_ENV: process.env.NODE_ENV,
-      API_PORT: parseInt(process.env.API_PORT, 10),
-      API_HOST: process.env.API_HOST,
-      API_PREFIX: process.env.API_PREFIX,
-      API_VERSION: process.env.API_VERSION,
-      POSTGRES_HOST: process.env.POSTGRES_HOST,
-      POSTGRES_PORT: parseInt(process.env.POSTGRES_PORT, 10),
-      POSTGRES_USER: process.env.POSTGRES_USER,
-      POSTGRES_PASSWORD: process.env.POSTGRES_PASSWORD,
-      POSTGRES_DB: process.env.POSTGRES_DB,
-      REDIS_HOST: process.env.REDIS_HOST,
-      REDIS_PORT: process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : undefined,
-      REDIS_PASSWORD: process.env.REDIS_PASSWORD,
-      JWT_SECRET: process.env.JWT_SECRET,
-      JWT_EXPIRATION: process.env.JWT_EXPIRATION ? parseInt(process.env.JWT_EXPIRATION, 10) : undefined,
-    },
-    { enableImplicitConversion: true },
-  );
-
-  const errors = validateSync(validatedConfig, {
-    skipMissingProperties: false,
-  });
-
-  if (errors.length > 0) {
-    throw new Error(errors.toString());
-  }
+/**
+ * Cấu hình TypeORM cho migration
+ */
+export const typeOrmConfig: DataSourceOptions = {
+  type: 'postgres',
+  host: env.POSTGRES_HOST || 'localhost',
+  port: env.POSTGRES_PORT,
+  username: env.POSTGRES_USER || 'postgres',
+  password: env.POSTGRES_PASSWORD || 'postgres',
+  database: env.POSTGRES_DB || 'harmonic_trading',
   
-  return validatedConfig;
-}
+  // Điều chỉnh đường dẫn entities và migrations để hoạt động trong cả development và production
+  entities: [
+    join(__dirname, '..', '**', '*.entity.{ts,js}')
+  ],
+  migrations: [
+    join(__dirname, '..', 'infrastructure', 'database', 'migrations', '*.{ts,js}')
+  ],
+  
+  // Các tùy chọn khác
+  synchronize: false,
+  logging: isDevelopment,
+  migrationsRun: false,
+  // Sử dụng connectTimeoutMS để tránh lỗi timeout khi kết nối
+  extra: {
+    connectionTimeoutMillis: 10000,
+  },
+};
+
+/**
+ * DataSource cho TypeORM Migration
+ */
+export const dataSource = new DataSource(typeOrmConfig);

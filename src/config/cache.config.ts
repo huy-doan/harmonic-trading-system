@@ -1,21 +1,19 @@
 // 012. src/config/cache.config.ts
 import { CacheModuleOptions } from '@nestjs/cache-manager';
-import { ConfigService } from '@nestjs/config';
 import { redisStore } from 'cache-manager-redis-store';
+import { env } from '@config/env.config';
 
-export const getCacheConfig = async (
-  configService: ConfigService,
-): Promise<CacheModuleOptions> => {
-  const isRedisEnabled = configService.get<string>('REDIS_HOST') !== undefined;
+export const getCacheConfig = async (): Promise<CacheModuleOptions> => {
+  const isRedisEnabled = env.REDIS_HOST !== undefined;
   
   if (isRedisEnabled) {
     return {
       store: await redisStore({
         socket: {
-          host: configService.get<string>('REDIS_HOST'),
-          port: configService.get<number>('REDIS_PORT'),
+          host: env.REDIS_HOST,
+          port: env.REDIS_PORT,
         },
-        password: configService.get<string>('REDIS_PASSWORD'),
+        password: env.REDIS_PASSWORD,
         ttl: 60 * 60 * 1000, // 1 hour in milliseconds
       }),
       isGlobal: true,

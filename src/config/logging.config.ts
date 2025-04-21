@@ -1,16 +1,14 @@
 // 014. src/config/logging.config.ts
-import { ConfigService } from '@nestjs/config';
 import * as winston from 'winston';
 import 'winston-daily-rotate-file';
+import { isProduction } from '@config/env.config';
 
 export interface LoggerConfig {
   level: string;
   transports: winston.transport[];
 }
 
-export const getLoggerConfig = (configService: ConfigService): LoggerConfig => {
-  const isProduction = configService.get<string>('NODE_ENV') === 'production';
-  
+export const getLoggerConfig = (): LoggerConfig => {
   // Transports for different environments
   const transports: winston.transport[] = [
     // Console transport with different format based on environment
@@ -67,8 +65,8 @@ export const getLoggerConfig = (configService: ConfigService): LoggerConfig => {
 };
 
 // Create a winston logger instance
-export const createLogger = (configService: ConfigService): winston.Logger => {
-  const loggerConfig = getLoggerConfig(configService);
+export const createLogger = (): winston.Logger => {
+  const loggerConfig = getLoggerConfig();
   
   return winston.createLogger({
     level: loggerConfig.level,

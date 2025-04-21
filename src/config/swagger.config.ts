@@ -2,6 +2,7 @@
 import { INestApplication } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { APP_CONSTANTS } from '@config/const.config';
+import { env } from '@config/env.config';
 
 export const setupSwagger = (app: INestApplication): void => {
   const config = new DocumentBuilder()
@@ -28,5 +29,5 @@ export const setupSwagger = (app: INestApplication): void => {
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup(`${env.API_PREFIX}/docs`, app, document);
 };

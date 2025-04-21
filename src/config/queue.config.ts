@@ -1,5 +1,5 @@
 // 013. src/config/queue.config.ts
-import { ConfigService } from '@nestjs/config';
+import { env } from '@config/env.config';
 
 export interface QueueConfig {
   redis: {
@@ -18,8 +18,8 @@ export interface QueueConfig {
   };
 }
 
-export const getQueueConfig = (configService: ConfigService): QueueConfig => {
-  const isRedisEnabled = configService.get<string>('REDIS_HOST') !== undefined;
+export const getQueueConfig = (): QueueConfig => {
+  const isRedisEnabled = env.REDIS_HOST !== undefined;
   
   if (!isRedisEnabled) {
     throw new Error('Redis is required for Queue to work properly.');
@@ -27,9 +27,9 @@ export const getQueueConfig = (configService: ConfigService): QueueConfig => {
   
   return {
     redis: {
-      host: configService.get<string>('REDIS_HOST'),
-      port: configService.get<number>('REDIS_PORT'),
-      password: configService.get<string>('REDIS_PASSWORD'),
+      host: env.REDIS_HOST,
+      port: env.REDIS_PORT,
+      password: env.REDIS_PASSWORD,
     },
     defaultJobOptions: {
       attempts: 3,
