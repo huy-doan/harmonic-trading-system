@@ -1,37 +1,23 @@
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModuleAsyncOptions, TypeOrmModuleOptions } from '@nestjs/typeorm';
+// src/config/orm.config.ts
 import { DataSource, DataSourceOptions } from 'typeorm';
-import { databaseConfig } from './database.config';
+import * as dotenv from 'dotenv';
 import { join } from 'path';
-import { env, isDevelopment } from '@config/env.config';
+
+// Load environment variables
+dotenv.config();
 
 /**
- * Cấu hình TypeORM không đồng bộ
- */
-export const typeOrmAsyncConfig: TypeOrmModuleAsyncOptions = {
-  imports: [ConfigModule.forFeature(databaseConfig)],
-  inject: [ConfigService],
-  useFactory: async (configService: ConfigService): Promise<TypeOrmModuleOptions> => {
-    const dbConfig = configService.get('database');
-    return dbConfig || typeOrmConfig; // Đảm bảo luôn trả về một đối tượng hợp lệ
-  },
-  dataSourceFactory: async (options: DataSourceOptions) => {
-    return new DataSource(options).initialize();
-  },
-};
-
-/**
- * Cấu hình TypeORM cho migration
+ * Configuration for TypeORM CLI
  */
 export const typeOrmConfig: DataSourceOptions = {
   type: 'postgres',
-  host: env.POSTGRES_HOST || 'localhost',
-  port: env.POSTGRES_PORT,
-  username: env.POSTGRES_USER || 'postgres',
-  password: env.POSTGRES_PASSWORD || 'postgres',
-  database: env.POSTGRES_DB || 'harmonic_trading',
+  host: process.env.POSTGRES_HOST || 'localhost',
+  port: parseInt(process.env.POSTGRES_PORT, 10) || 5432,
+  username: process.env.POSTGRES_USER || 'postgres',
+  password: process.env.POSTGRES_PASSWORD || 'postgres',
+  database: process.env.POSTGRES_DB || 'harmonic_trading',
   
-  // Điều chỉnh đường dẫn entities và migrations để hoạt động trong cả development và production
+  // Adjust paths for entities and migrations
   entities: [
     join(__dirname, '..', '**', '*.entity.{ts,js}')
   ],
@@ -39,17 +25,13 @@ export const typeOrmConfig: DataSourceOptions = {
     join(__dirname, '..', 'infrastructure', 'database', 'migrations', '*.{ts,js}')
   ],
   
-  // Các tùy chọn khác
   synchronize: false,
-  logging: isDevelopment,
+  logging: true,
   migrationsRun: false,
-  // Sử dụng connectTimeoutMS để tránh lỗi timeout khi kết nối
-  extra: {
-    connectionTimeoutMillis: 10000,
-  },
 };
 
 /**
- * DataSource cho TypeORM Migration
+ * DataSource for TypeORM CLI - used for migrations
  */
-export const dataSource = new DataSource(typeOrmConfig);
+const dataSource = new DataSource(typeOrmConfig);
+export default dataSource;
