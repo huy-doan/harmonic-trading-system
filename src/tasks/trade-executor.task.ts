@@ -16,6 +16,7 @@ import { APP_CONSTANTS } from '@shared/constants/constants';
 export class TradeExecutorTask {
   private readonly logger = new Logger(TradeExecutorTask.name);
   private readonly isEnabled: boolean;
+  private readonly isSimulationMode: boolean;
   private readonly tradeExecutionInterval: number;
   private readonly maxConcurrentTrades: number;
 
@@ -26,10 +27,14 @@ export class TradeExecutorTask {
     private readonly tradeSetupService: TradeSetupService,
     private readonly tradeExecutorService: TradeExecutorService,
     private readonly eventEmitter: EventEmitter2,
-    @InjectQueue(QUEUE_NAMES.TRADE_EXECUTION) private tradeExecutionQueue: Queue
+    @InjectQueue(QUEUE_NAMES.TRADE_EXECUTION) private tradeExecutionQueue: Queue,
+    @InjectQueue(QUEUE_NAMES.NOTIFICATION) private notificationQueue: Queue
   ) {
     // Kiểm tra nếu task được bật trong cấu hình
     this.isEnabled = this.configService.get<string>('ENABLE_TRADE_EXECUTOR') !== 'false';
+    
+    // Kiểm tra chế độ mô phỏng
+    this.isSimulationMode = this.configService.get<string>('TRADING_MODE') !== 'live';
     
     // Lấy khoảng thời gian kiểm tra thực thi giao dịch từ cấu hình hoặc giá trị mặc định
     this.tradeExecutionInterval = this.configService.get<number>(
@@ -41,7 +46,7 @@ export class TradeExecutorTask {
     this.maxConcurrentTrades = this.configService.get<number>('MAX_CONCURRENT_TRADES', 5);
     
     if (this.isEnabled) {
-      this.logger.log('Trade Executor Task is enabled');
+      this.logger.log(`Trade Executor Task is enabled (Mode: ${this.isSimulationMode ? 'SIMULATION' : 'LIVE'})`);
       this.logger.log(`Trade execution interval: ${this.tradeExecutionInterval}ms`);
       this.logger.log(`Maximum concurrent trades: ${this.maxConcurrentTrades}`);
     } else {
@@ -165,6 +170,49 @@ export class TradeExecutorTask {
   }
 
   /**
+   * Xử lý sự kiện khi phát hiện mô hình mới
+   */
+  @OnEvent('pattern.detected')
+  async handlePatternDetected(data: {
+    patternId: string;
+    patternType: string;
+    symbol: string;
+    timeframe: string;
+    direction: string;
+    qualityScore: number;
+  }) {
+    if (!this.isEnabled) return;
+    
+    // Chỉ xử lý các mô hình có chất lượng cao
+    if (data.qualityScore < 75) {
+      return;
+    }
+    
+    this.logger.debug(`Creating trade setup for pattern ${data.patternId}`);
+    
+    try {
+      // Tạo thiết lập giao dịch và thêm vào hàng đợi
+      await this.tradeExecutionQueue.add(
+        JOB_NAMES.SETUP_TRADE,
+        {
+          patternId: data.patternId,
+          timestamp: Date.now()
+        },
+        {
+          attempts: 2,
+          backoff: {
+            type: 'fixed',
+            delay: 2000
+          },
+          removeOnComplete: true
+        }
+      );
+    } catch (error) {
+      this.logger.error(`Failed to create trade setup for pattern ${data.patternId}`, error);
+    }
+  }
+
+  /**
    * Xử lý công việc từ hàng đợi: Kiểm tra giao dịch đang mở
    */
   @OnEvent(`bull:${QUEUE_NAMES.TRADE_EXECUTION}:${JOB_NAMES.MANAGE_OPEN_TRADES}:completed`)
@@ -177,8 +225,37 @@ export class TradeExecutorTask {
    */
   @OnEvent(`bull:${QUEUE_NAMES.TRADE_EXECUTION}:${JOB_NAMES.SETUP_TRADE}:completed`)
   async onSetupTradeJobCompleted(job: any) {
-    const { setupId } = job.data;
-    this.logger.debug(`Trade setup check completed for setup ${setupId}`);
+    const { setupId, patternId } = job.data;
+    
+    if (patternId) {
+      this.logger.debug(`Trade setup creation completed for pattern ${patternId}`);
+      try {
+        // Tạo thiết lập giao dịch từ mô hình
+        const setup = await this.tradeSetupService.createFromPattern(patternId);
+        
+        // Gửi thông báo về thiết lập giao dịch mới
+        await this.notificationQueue.add(
+          JOB_NAMES.SEND_TRADE_NOTIFICATION,
+          {
+            type: 'TRADE_SETUP',
+            setupId: setup.id,
+            patternId,
+            symbol: setup.symbol,
+            direction: setup.direction,
+            timestamp: Date.now()
+          },
+          {
+            priority: 3,
+            attempts: 2,
+            removeOnComplete: true
+          }
+        );
+      } catch (error) {
+        this.logger.error(`Error creating trade setup from pattern ${patternId}`, error);
+      }
+    } else if (setupId) {
+      this.logger.debug(`Trade setup check completed for setup ${setupId}`);
+    }
   }
 
   /**
@@ -216,8 +293,41 @@ export class TradeExecutorTask {
    */
   @OnEvent(`bull:${QUEUE_NAMES.TRADE_EXECUTION}:${JOB_NAMES.EXECUTE_TRADE}:completed`)
   async onExecuteTradeJobCompleted(job: any) {
-    const { symbol, price } = job.data;
-    this.logger.debug(`Trade execution check completed for ${symbol} at price ${price}`);
+    const { symbol, price, setupId } = job.data;
+    
+    if (setupId) {
+      this.logger.debug(`Trade execution completed for setup ${setupId}`);
+      
+      try {
+        // Kiểm tra điều kiện thực thi cho thiết lập giao dịch cụ thể
+        const trade = await this.executeTradeForSetup(setupId);
+        
+        if (trade) {
+          // Gửi thông báo về giao dịch mới
+          await this.notificationQueue.add(
+            JOB_NAMES.SEND_TRADE_NOTIFICATION,
+            {
+              type: 'TRADE_EXECUTED',
+              tradeId: trade.id,
+              setupId,
+              symbol: trade.symbol,
+              direction: trade.direction,
+              price: trade.entryPrice,
+              timestamp: Date.now()
+            },
+            {
+              priority: 2,
+              attempts: 2,
+              removeOnComplete: true
+            }
+          );
+        }
+      } catch (error) {
+        this.logger.error(`Error executing trade for setup ${setupId}`, error);
+      }
+    } else if (symbol && price) {
+      this.logger.debug(`Price check completed for ${symbol} at price ${price}`);
+    }
   }
 
   /**
@@ -273,6 +383,27 @@ export class TradeExecutorTask {
       if (shouldClose) {
         // Đóng giao dịch
         const closedTrade = await this.tradeExecutorService.closeTradeAtMarket(tradeId);
+        
+        // Gửi thông báo về giao dịch đã đóng
+        await this.notificationQueue.add(
+          JOB_NAMES.SEND_TRADE_NOTIFICATION,
+          {
+            type: 'TRADE_CLOSED',
+            tradeId: trade.id,
+            symbol: trade.symbol,
+            reason,
+            price: currentPrice,
+            profitLoss: closedTrade.profitLoss,
+            profitLossPercent: closedTrade.profitLossPercent,
+            timestamp: Date.now()
+          },
+          {
+            priority: 2,
+            attempts: 2,
+            removeOnComplete: true
+          }
+        );
+        
         return { message: reason, trade: closedTrade };
       }
       
@@ -281,5 +412,16 @@ export class TradeExecutorTask {
       this.logger.error(`Failed to check and close trade ${tradeId}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Tính tỷ lệ rủi ro-lợi nhuận
+   */
+  private calculateRiskRewardRatio(entryPrice: number, stopLoss: number, takeProfit: number): number {
+    const risk = Math.abs(entryPrice - stopLoss);
+    if (risk === 0) return 0;
+    
+    const reward = Math.abs(takeProfit - entryPrice);
+    return parseFloat((reward / risk).toFixed(2));
   }
 }

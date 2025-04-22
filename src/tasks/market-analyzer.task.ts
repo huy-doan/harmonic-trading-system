@@ -1,4 +1,5 @@
 // 165. src/tasks/market-analyzer.task.ts
+// TODO: generate this file
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bull';
@@ -6,8 +7,8 @@ import { Queue } from 'bull';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MarketDataStreamService } from '@infrastructure/external/binance/market-data-stream.service';
 import { QUEUE_NAMES } from '@config/queue.config';
-import { ConfigService } from '@nestjs/config';
 import { APP_CONSTANTS } from '@shared/constants/constants';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class MarketAnalyzerTask {
@@ -20,7 +21,7 @@ export class MarketAnalyzerTask {
     private readonly eventEmitter: EventEmitter2,
     @InjectQueue(QUEUE_NAMES.MARKET_ANALYSIS) private marketAnalysisQueue: Queue
   ) {
-    // Check if the task is enabled in configuration
+    // Kiểm tra nếu task là được bật trong cấu hình
     this.isEnabled = this.configService.get<string>('ENABLE_MARKET_ANALYZER') !== 'false';
     
     if (this.isEnabled) {
@@ -31,7 +32,7 @@ export class MarketAnalyzerTask {
   }
 
   /**
-   * Run market analysis hourly
+   * Chạy phân tích thị trường mỗi giờ
    */
   @Cron(CronExpression.EVERY_HOUR)
   async analyzeMarketHourly() {
@@ -40,10 +41,10 @@ export class MarketAnalyzerTask {
     this.logger.log('Running hourly market analysis');
     
     try {
-      // Get all symbols being tracked
+      // Lấy tất cả các cặp tiền đang theo dõi
       const symbols = this.marketDataService.getSymbols();
       
-      // Add to queue for processing
+      // Thêm vào hàng đợi để xử lý
       await this.marketAnalysisQueue.add(
         'analyze_market_trends',
         {
@@ -68,7 +69,7 @@ export class MarketAnalyzerTask {
   }
 
   /**
-   * Run market analysis daily
+   * Chạy phân tích thị trường hàng ngày
    */
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async analyzeMarketDaily() {
@@ -77,10 +78,10 @@ export class MarketAnalyzerTask {
     this.logger.log('Running daily market analysis');
     
     try {
-      // Get all symbols being tracked
+      // Lấy tất cả các cặp tiền đang theo dõi
       const symbols = this.marketDataService.getSymbols();
       
-      // Add to queue for processing
+      // Thêm vào hàng đợi để xử lý
       await this.marketAnalysisQueue.add(
         'analyze_market_trends',
         {
@@ -99,7 +100,7 @@ export class MarketAnalyzerTask {
         }
       );
       
-      // Also update technical indicators
+      // Cập nhật chỉ báo kỹ thuật
       await this.marketAnalysisQueue.add(
         'update_technical_indicators',
         {
@@ -123,7 +124,7 @@ export class MarketAnalyzerTask {
   }
 
   /**
-   * Update market data for all tracked symbols
+   * Cập nhật dữ liệu thị trường cho tất cả các cặp tiền đang theo dõi
    */
   @Cron(CronExpression.EVERY_30_MINUTES)
   async updateMarketData() {
@@ -132,7 +133,7 @@ export class MarketAnalyzerTask {
     this.logger.debug('Refreshing market data cache');
     
     try {
-      // Get all symbols being tracked
+      // Lấy tất cả các cặp tiền đang theo dõi
       const symbols = this.marketDataService.getSymbols();
       const timeframes = [
         APP_CONSTANTS.TIMEFRAMES.ONE_HOUR,
@@ -140,18 +141,18 @@ export class MarketAnalyzerTask {
         APP_CONSTANTS.TIMEFRAMES.ONE_DAY
       ];
       
-      // Process each symbol and timeframe
+      // Xử lý từng cặp tiền và khung thời gian
       for (const symbol of symbols) {
         for (const timeframe of timeframes) {
           try {
-            // This will refresh the cache internally
+            // Lấy dữ liệu nến để làm mới cache nội bộ
             await this.marketDataService.getCandlesticks(symbol, timeframe, 100);
           } catch (error) {
             this.logger.error(`Error refreshing market data for ${symbol} ${timeframe}`, error);
-            // Continue with other symbols/timeframes
+            // Tiếp tục với các cặp tiền và khung thời gian khác
           }
           
-          // Small delay to avoid rate limits
+          // Thêm độ trễ nhỏ để tránh vượt quá giới hạn rate limit
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
@@ -163,7 +164,7 @@ export class MarketAnalyzerTask {
   }
 
   /**
-   * Manual trigger for market analysis
+   * Kích hoạt thủ công phân tích thị trường
    */
   async triggerMarketAnalysis(symbols: string[], timeframe: string): Promise<string> {
     if (!this.isEnabled) {

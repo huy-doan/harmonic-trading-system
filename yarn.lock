@@ -1022,7 +1022,7 @@
 
 "@nestjs/bull@^11.0.2":
   version "11.0.2"
-  resolved "https://registry.npmjs.org/@nestjs/bull/-/bull-11.0.2.tgz"
+  resolved "https://registry.yarnpkg.com/@nestjs/bull/-/bull-11.0.2.tgz#53c5af2e87405fe1f99b562c497e7bd9df802bcf"
   integrity sha512-RjyP9JZUuLmMhmq1TMNIZqolkAd14az1jyXMMVki+C9dYvaMjWzBSwcZAtKs9Pk15Rm7qN1xn3R11aMV2Xv4gg==
   dependencies:
     "@nestjs/bull-shared" "^11.0.2"
@@ -2410,7 +2410,7 @@ buffer@^6.0.3:
 
 bull@^4.16.5:
   version "4.16.5"
-  resolved "https://registry.npmjs.org/bull/-/bull-4.16.5.tgz"
+  resolved "https://registry.yarnpkg.com/bull/-/bull-4.16.5.tgz#855a17e7880862a231dac3c8a6392c77668ce49d"
   integrity sha512-lDsx2BzkKe7gkCYiT5Acj02DpTwDznl/VNN7Psn7M3USPG7Vs/BaClZJJTAG+ufAR9++N1/NiUTdaFBWDIl5TQ==
   dependencies:
     cron-parser "^4.9.0"
