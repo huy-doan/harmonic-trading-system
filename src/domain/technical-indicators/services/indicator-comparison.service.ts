@@ -46,10 +46,10 @@ export class IndicatorComparisonService {
     private readonly rsiService: RSIService,
     private readonly macdService: MACDService
   ) {
-    // Lấy cấu hình cho các chỉ báo
+    // Get configuration for indicators
     this.indicatorsConfig = this.configService.get('indicators');
     
-    // Xác định các chỉ báo đã được bật
+    // Determine which indicators are enabled
     if (isIndicatorEnabled(IndicatorType.ICHIMOKU, this.indicatorsConfig)) {
       this.enabledIndicators.push(IndicatorType.ICHIMOKU);
     }
@@ -66,7 +66,7 @@ export class IndicatorComparisonService {
   }
 
   /**
-   * So sánh các tín hiệu từ các chỉ báo khác nhau để đưa ra tín hiệu tổng hợp
+   * Compare signals from different indicators to produce a consensus signal
    */
   async compareIndicators(
     symbol: string,
@@ -74,7 +74,7 @@ export class IndicatorComparisonService {
     timestamp?: number
   ): Promise<ComparisonResult> {
     try {
-      // Chỉ lấy dữ liệu từ các chỉ báo đã được bật
+      // Only get data from enabled indicators
       const [ichimokuData, rsiData, macdData] = await Promise.all([
         this.enabledIndicators.includes(IndicatorType.ICHIMOKU)
           ? this.ichimokuService.getIchimokuData(symbol, timeframe, timestamp, timestamp ? timestamp + 1 : undefined, 1)
@@ -89,17 +89,17 @@ export class IndicatorComparisonService {
           : Promise.resolve([])
       ]);
       
-      // Lấy dữ liệu mới nhất từ mỗi chỉ báo
+      // Get the latest data from each indicator
       const latestIchimoku = ichimokuData.length > 0 ? ichimokuData[0] : null;
       const latestRSI = rsiData.length > 0 ? rsiData[0] : null;
       const latestMACD = macdData.length > 0 ? macdData[0] : null;
       
-      // Tính điểm tổng hợp dựa trên các tín hiệu
+      // Calculate consensus score based on signals
       let consensusScoreTotal = 0;
       let consensusStrengthTotal = 0;
       let weightTotal = 0;
       
-      // Kết quả tín hiệu cho từng chỉ báo
+      // Signal results for each indicator
       const signals = {
         ichimoku: latestIchimoku ? {
           signal: latestIchimoku.signal,
@@ -120,7 +120,7 @@ export class IndicatorComparisonService {
         } : undefined
       };
       
-      // Tính điểm cho Ichimoku
+      // Calculate score for Ichimoku
       if (latestIchimoku && this.enabledIndicators.includes(IndicatorType.ICHIMOKU)) {
         const weight = this.indicatorsConfig.comparison.weights.ichimoku;
         const signalValue = signalToValue(latestIchimoku.signal as IndicatorSignal);
@@ -129,7 +129,7 @@ export class IndicatorComparisonService {
         weightTotal += weight;
       }
       
-      // Tính điểm cho RSI
+      // Calculate score for RSI
       if (latestRSI && this.enabledIndicators.includes(IndicatorType.RSI)) {
         const weight = this.indicatorsConfig.comparison.weights.rsi;
         const signalValue = signalToValue(latestRSI.values.signal as IndicatorSignal);
@@ -138,7 +138,7 @@ export class IndicatorComparisonService {
         weightTotal += weight;
       }
       
-      // Tính điểm cho MACD
+      // Calculate score for MACD
       if (latestMACD && this.enabledIndicators.includes(IndicatorType.MACD)) {
         const weight = this.indicatorsConfig.comparison.weights.macd;
         const signalValue = signalToValue(latestMACD.values.trend as IndicatorSignal);
@@ -147,14 +147,14 @@ export class IndicatorComparisonService {
         weightTotal += weight;
       }
       
-      // Tính điểm trung bình
+      // Calculate average scores
       const consensusScore = weightTotal > 0 ? consensusScoreTotal / weightTotal : 0;
       const consensusStrength = weightTotal > 0 ? consensusStrengthTotal / weightTotal : 0;
       
-      // Xác định tín hiệu tổng hợp
+      // Determine overall signal
       let overallSignal = this.determineOverallSignal(consensusScore);
       
-      // Mô tả và khuyến nghị
+      // Generate description and recommendations
       const { description, recommendations } = this.generateRecommendations(
         overallSignal,
         consensusScore,
@@ -180,7 +180,7 @@ export class IndicatorComparisonService {
   }
 
   /**
-   * Xác định tín hiệu tổng hợp dựa trên điểm số đồng thuận
+   * Determine overall signal based on consensus score
    */
   private determineOverallSignal(consensusScore: number): string {
     if (consensusScore >= 2.5) {
@@ -201,7 +201,7 @@ export class IndicatorComparisonService {
   }
 
   /**
-   * Tạo mô tả và khuyến nghị dựa trên kết quả phân tích
+   * Generate description and recommendations based on analysis results
    */
   private generateRecommendations(
     overallSignal: string,
@@ -212,68 +212,68 @@ export class IndicatorComparisonService {
     let description = '';
     const recommendations: string[] = [];
     
-    // Mô tả chung
+    // General description
     if (consensusStrength < 40) {
-      description = 'Tín hiệu yếu với độ tin cậy thấp.';
-      recommendations.push('Nên thận trọng khi giao dịch dựa trên tín hiệu này.');
+      description = 'Weak signal with low confidence.';
+      recommendations.push('Exercise caution when trading based on this signal.');
     } else if (consensusStrength < 70) {
-      description = 'Tín hiệu với độ tin cậy trung bình.';
-      recommendations.push('Có thể xem xét giao dịch kèm theo các xác nhận khác.');
+      description = 'Signal with medium confidence.';
+      recommendations.push('Consider trading with additional confirmations.');
     } else {
-      description = 'Tín hiệu mạnh với độ tin cậy cao.';
-      recommendations.push('Tín hiệu đáng tin cậy cho cơ hội giao dịch.');
+      description = 'Strong signal with high confidence.';
+      recommendations.push('Reliable signal for trading opportunity.');
     }
     
-    // Mô tả chi tiết
+    // Detailed descriptions
     switch (overallSignal) {
       case IndicatorSignal.STRONG_BULLISH:
-        description += ' Xu hướng tăng mạnh đã được xác nhận bởi nhiều chỉ báo.';
-        recommendations.push('Xem xét mở vị thế mua.');
-        recommendations.push('Đặt stop loss dưới vùng hỗ trợ gần nhất.');
+        description += ' Strong uptrend confirmed by multiple indicators.';
+        recommendations.push('Consider opening a long position.');
+        recommendations.push('Place stop loss below the nearest support level.');
         break;
         
       case IndicatorSignal.BULLISH:
-        description += ' Xu hướng tăng được xác nhận nhưng không quá mạnh.';
-        recommendations.push('Xem xét mở vị thế mua khi có xác nhận thêm.');
-        recommendations.push('Quản lý rủi ro cẩn thận với stop loss phù hợp.');
+        description += ' Uptrend confirmed but not overly strong.';
+        recommendations.push('Consider opening a long position with additional confirmation.');
+        recommendations.push('Manage risk carefully with appropriate stop loss.');
         break;
         
       case IndicatorSignal.WEAK_BULLISH:
-        description += ' Có dấu hiệu tăng nhẹ nhưng chưa rõ ràng.';
-        recommendations.push('Chờ đợi xác nhận thêm trước khi mở vị thế.');
-        recommendations.push('Cân nhắc giao dịch với khối lượng nhỏ hoặc không giao dịch.');
+        description += ' Slight bullish signs but not definitive.';
+        recommendations.push('Wait for more confirmation before entering position.');
+        recommendations.push('Consider smaller position size or no trade.');
         break;
         
       case IndicatorSignal.NEUTRAL:
-        description += ' Không có xu hướng rõ ràng, thị trường đi ngang.';
-        recommendations.push('Tránh mở vị thế mới.');
-        recommendations.push('Có thể sử dụng chiến lược giao dịch biên độ.');
+        description += ' No clear trend, market moving sideways.';
+        recommendations.push('Avoid opening new positions.');
+        recommendations.push('Consider range trading strategies.');
         break;
         
       case IndicatorSignal.WEAK_BEARISH:
-        description += ' Có dấu hiệu giảm nhẹ nhưng chưa rõ ràng.';
-        recommendations.push('Chờ đợi xác nhận thêm trước khi mở vị thế bán.');
-        recommendations.push('Cân nhắc giao dịch với khối lượng nhỏ hoặc không giao dịch.');
+        description += ' Slight bearish signs but not definitive.';
+        recommendations.push('Wait for more confirmation before shorting.');
+        recommendations.push('Consider smaller position size or no trade.');
         break;
         
       case IndicatorSignal.BEARISH:
-        description += ' Xu hướng giảm được xác nhận nhưng không quá mạnh.';
-        recommendations.push('Xem xét mở vị thế bán khi có xác nhận thêm.');
-        recommendations.push('Quản lý rủi ro cẩn thận với stop loss phù hợp.');
+        description += ' Downtrend confirmed but not overly strong.';
+        recommendations.push('Consider opening a short position with additional confirmation.');
+        recommendations.push('Manage risk carefully with appropriate stop loss.');
         break;
         
       case IndicatorSignal.STRONG_BEARISH:
-        description += ' Xu hướng giảm mạnh đã được xác nhận bởi nhiều chỉ báo.';
-        recommendations.push('Xem xét mở vị thế bán.');
-        recommendations.push('Đặt stop loss trên vùng kháng cự gần nhất.');
+        description += ' Strong downtrend confirmed by multiple indicators.';
+        recommendations.push('Consider opening a short position.');
+        recommendations.push('Place stop loss above the nearest resistance level.');
         break;
         
       default:
-        description += ' Tín hiệu không rõ ràng.';
-        recommendations.push('Nên thận trọng và chờ đợi tín hiệu rõ ràng hơn.');
+        description += ' Unclear signal.';
+        recommendations.push('Exercise caution and wait for clearer signals.');
     }
     
-    // Khuyến nghị dựa trên tín hiệu mâu thuẫn giữa các chỉ báo
+    // Recommendations based on conflicting signals between indicators
     const enabledSignalsCount = Object.values(signals).filter(s => s?.enabled).length;
     const differentSignalsCount = new Set(
       Object.values(signals)
@@ -287,8 +287,8 @@ export class IndicatorComparisonService {
     ).size;
     
     if (differentSignalsCount > 1 && enabledSignalsCount >= 2) {
-      description += ' Lưu ý rằng có sự mâu thuẫn giữa các chỉ báo.';
-      recommendations.push('Cân nhắc thêm các phân tích khác do có mâu thuẫn giữa các chỉ báo.');
+      description += ' Note that there are conflicting signals between indicators.';
+      recommendations.push('Consider additional analysis due to conflicting indicator signals.');
     }
     
     return { description, recommendations };

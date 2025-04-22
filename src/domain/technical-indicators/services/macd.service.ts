@@ -1,4 +1,4 @@
-// 111. src/domain/technical-indicators/services/macd.service.ts
+// src/domain/technical-indicators/services/macd.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';

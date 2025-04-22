@@ -3,10 +3,10 @@ import { registerAs } from '@nestjs/config';
 import { env } from '@config/env.config';
 
 /**
- * Cấu hình cho các chỉ báo kỹ thuật
+ * Configuration for technical indicators
  */
 export const indicatorConfig = registerAs('indicators', () => ({
-  // Cấu hình Ichimoku
+  // Ichimoku configuration
   ichimoku: {
     enabled: env.ENABLE_ICHIMOKU !== 'false',
     defaultParameters: {
@@ -17,7 +17,7 @@ export const indicatorConfig = registerAs('indicators', () => ({
     },
   },
   
-  // Cấu hình RSI
+  // RSI configuration
   rsi: {
     enabled: env.ENABLE_RSI !== 'false',
     defaultParameters: {
@@ -27,7 +27,7 @@ export const indicatorConfig = registerAs('indicators', () => ({
     },
   },
   
-  // Cấu hình MACD
+  // MACD configuration
   macd: {
     enabled: env.ENABLE_MACD !== 'false',
     defaultParameters: {
@@ -37,13 +37,13 @@ export const indicatorConfig = registerAs('indicators', () => ({
     },
   },
   
-  // Cấu hình so sánh chỉ báo kỹ thuật
+  // Indicator comparison configuration
   comparison: {
-    // Bật/tắt so sánh giữa các chỉ báo
+    // Enable/disable comparison between indicators
     enabled: env.ENABLE_INDICATOR_COMPARISON !== 'false',
-    // Ngưỡng đồng thuận (số lượng chỉ báo cần đồng ý để xác nhận tín hiệu)
+    // Consensus threshold (number of indicators that need to agree to confirm a signal)
     consensusThreshold: parseInt(env.INDICATOR_CONSENSUS_THRESHOLD || '2', 10),
-    // Trọng số cho từng chỉ báo (ảnh hưởng đến điểm số chung)
+    // Weights for each indicator (affects the overall score)
     weights: {
       ichimoku: parseFloat(env.ICHIMOKU_WEIGHT || '1.0'),
       rsi: parseFloat(env.RSI_WEIGHT || '1.0'),
@@ -53,7 +53,7 @@ export const indicatorConfig = registerAs('indicators', () => ({
 }));
 
 /**
- * Các loại chỉ báo được hỗ trợ
+ * Supported indicator types
  */
 export enum IndicatorType {
   ICHIMOKU = 'ICHIMOKU',
@@ -62,7 +62,7 @@ export enum IndicatorType {
 }
 
 /**
- * Các tín hiệu từ chỉ báo
+ * Indicator signals
  */
 export enum IndicatorSignal {
   STRONG_BULLISH = 'STRONG_BULLISH',
@@ -79,7 +79,7 @@ export enum IndicatorSignal {
 }
 
 /**
- * Kiểm tra xem chỉ báo có được bật hay không
+ * Check if an indicator is enabled
  */
 export function isIndicatorEnabled(type: IndicatorType, config: any): boolean {
   switch (type) {
@@ -95,7 +95,7 @@ export function isIndicatorEnabled(type: IndicatorType, config: any): boolean {
 }
 
 /**
- * Chuyển đổi tín hiệu thành số
+ * Convert signal to numeric value
  */
 export function signalToValue(signal: IndicatorSignal): number {
   switch (signal) {
@@ -116,9 +116,9 @@ export function signalToValue(signal: IndicatorSignal): number {
     case IndicatorSignal.STRONG_BEARISH:
       return -3;
     case IndicatorSignal.OVERBOUGHT:
-      return -2; // Overbought thường được coi là tín hiệu bearish
+      return -2; // Overbought is typically considered a bearish signal
     case IndicatorSignal.OVERSOLD:
-      return 2; // Oversold thường được coi là tín hiệu bullish
+      return 2; // Oversold is typically considered a bullish signal
     default:
       return 0;
   }
