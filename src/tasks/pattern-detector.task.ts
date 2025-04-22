@@ -16,6 +16,8 @@ import { QUEUE_NAMES, JOB_NAMES } from '@config/queue.config';
 import { APP_CONSTANTS } from '@shared/constants/constants';
 import { Candlestick } from '@shared/interfaces/market-data.interface';
 import { HarmonicPattern } from '@domain/harmonic-patterns/entities/harmonic-pattern.entity';
+// Import adapter
+import { CandlestickAdapter } from '@libs/candlestick/utils/candlestick-adapter';
 
 @Injectable()
 export class PatternDetectorTask {
@@ -130,12 +132,15 @@ export class PatternDetectorTask {
       this.logger.debug(`Detecting patterns for ${symbol} ${timeframe}`);
       
       // Lấy dữ liệu nến
-      const candles = await this.marketDataService.getCandlesticks(symbol, timeframe, 200);
+      const marketDataCandles = await this.marketDataService.getCandlesticks(symbol, timeframe, 200);
       
-      if (!candles || candles.length < 50) {
+      if (!marketDataCandles || marketDataCandles.length < 50) {
         this.logger.warn(`Insufficient candlestick data for ${symbol} ${timeframe}`);
         return [];
       }
+
+      // Chuyển đổi sang Candlestick class
+      const candles = CandlestickAdapter.fromMarketDataArray(marketDataCandles);
 
       // Chạy các thuật toán phát hiện mẫu hình
       const [gartleyPatterns, butterflyPatterns, batPatterns, crabPatterns, cypherPatterns] = await Promise.all([
