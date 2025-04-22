@@ -6,6 +6,9 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MarketData } from '../entities/market-data.entity';
 import { MarketDataStreamService } from '@infrastructure/external/binance/market-data-stream.service';
 import { Candlestick } from '@shared/interfaces/market-data.interface';
+import { BinanceDataMapperService } from '@infrastructure/external/binance/binance-data-mapper.service';
+import { CandleChartInterval } from 'binance-api-node';
+import { TimeframeEnum } from '../dtos/market-data.dto';
 
 @Injectable()
 export class MarketAnalyzerService {
@@ -15,6 +18,7 @@ export class MarketAnalyzerService {
     @InjectRepository(MarketData)
     private readonly marketDataRepository: Repository<MarketData>,
     private readonly marketDataStreamService: MarketDataStreamService,
+    private readonly binanceDataMapper: BinanceDataMapperService,
     private readonly eventEmitter: EventEmitter2
   ) {}
 
@@ -25,19 +29,25 @@ export class MarketAnalyzerService {
     try {
       this.logger.debug(`Analyzing market data for ${symbol} ${timeframe}`);
       
-      // Get recent candlesticks
-      const candles = await this.marketDataStreamService.getCandlesticks(symbol, timeframe, 100);
+      // Get recent candlesticks from Binance
+      const candleData = this.marketDataStreamService.getCandleData(
+        symbol, 
+        timeframe as CandleChartInterval
+      );
       
-      if (!candles || candles.length === 0) {
+      if (!candleData || candleData.length === 0) {
         this.logger.warn(`No candles found for ${symbol} ${timeframe}`);
         return null;
       }
       
+      // Convert Binance data to market entities
+      const marketEntities = this.binanceDataMapper.mapCandlesToMarketData(candleData);
+      
       // Store candles in the database
-      await this.storeMarketData(candles);
+      await this.storeMarketData(marketEntities);
       
       // Calculate market metrics
-      const marketMetrics = this.calculateMarketMetrics(candles);
+      const marketMetrics = this.calculateMarketMetrics(marketEntities);
       
       // Emit market analysis event
       this.eventEmitter.emit('market.analysis.completed', {
@@ -57,25 +67,8 @@ export class MarketAnalyzerService {
   /**
    * Stores candlestick data in the database
    */
-  private async storeMarketData(candles: Candlestick[]): Promise<void> {
+  private async storeMarketData(marketDataEntities: MarketData[]): Promise<void> {
     try {
-      // Convert candlesticks to entity format
-      const marketDataEntities = candles.map(candle => ({
-        symbol: candle.symbol,
-        timeframe: candle.timeframe,
-        openTime: candle.openTime,
-        closeTime: candle.closeTime,
-        open: candle.open,
-        high: candle.high,
-        low: candle.low,
-        close: candle.close,
-        volume: candle.volume,
-        quoteAssetVolume: candle.quoteAssetVolume,
-        numberOfTrades: candle.numberOfTrades,
-        takerBuyBaseAssetVolume: candle.takerBuyBaseAssetVolume,
-        takerBuyQuoteAssetVolume: candle.takerBuyQuoteAssetVolume
-      }));
-      
       // Use upsert to avoid duplicate errors
       await this.marketDataRepository.upsert(
         marketDataEntities,
@@ -88,9 +81,9 @@ export class MarketAnalyzerService {
   }
 
   /**
-   * Calculate market metrics from candlestick data
+   * Calculate market metrics from market data entities
    */
-  private calculateMarketMetrics(candles: Candlestick[]): any {
+  private calculateMarketMetrics(candles: MarketData[]): any {
     if (candles.length < 30) {
       return {
         insufficient_data: true,
@@ -170,9 +163,9 @@ export class MarketAnalyzerService {
   }
 
   /**
-   * Find support levels from candlestick data
+   * Find support levels from market data entities
    */
-  private findSupportLevels(candles: Candlestick[]): number[] {
+  private findSupportLevels(candles: MarketData[]): number[] {
     const levels = new Set<number>();
     const lastCandle = candles[candles.length - 1];
     
@@ -198,9 +191,9 @@ export class MarketAnalyzerService {
   }
 
   /**
-   * Find resistance levels from candlestick data
+   * Find resistance levels from market data entities
    */
-  private findResistanceLevels(candles: Candlestick[]): number[] {
+  private findResistanceLevels(candles: MarketData[]): number[] {
     const levels = new Set<number>();
     const lastCandle = candles[candles.length - 1];
     
@@ -259,17 +252,58 @@ export class MarketAnalyzerService {
    */
   async getLatestMarketMetrics(symbol: string, timeframe: string): Promise<any> {
     try {
-      // Get recent candlesticks
-      const candles = await this.marketDataStreamService.getCandlesticks(symbol, timeframe, 100);
+      // Get the latest market data entity directly from the service
+      const latestEntity = this.marketDataStreamService.getLatestMarketDataEntity(
+        symbol, 
+        timeframe as CandleChartInterval
+      );
       
-      if (!candles || candles.length === 0) {
-        throw new Error(`No candles found for ${symbol} ${timeframe}`);
+      if (!latestEntity) {
+        throw new Error(`No market data found for ${symbol} ${timeframe}`);
+      }
+      
+      // Get recent market data for analysis
+      const recentEntities = await this.getMarketData(
+        symbol,
+        timeframe,
+        new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) // Last 14 days
+      );
+      
+      if (recentEntities.length < 10) {
+        throw new Error(`Insufficient historical data for ${symbol} ${timeframe}`);
       }
       
       // Calculate market metrics
-      return this.calculateMarketMetrics(candles);
+      return this.calculateMarketMetrics(recentEntities);
     } catch (error) {
       this.logger.error(`Error getting market metrics for ${symbol} ${timeframe}`, error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Get supported timeframes
+   */
+  getTimeframes(): string[] {
+    return Object.values(TimeframeEnum);
+  }
+  
+  /**
+   * Start watching a symbol with multiple timeframes
+   */
+  async watchSymbol(symbol: string, timeframes: string[] = Object.values(TimeframeEnum)): Promise<void> {
+    try {
+      // First watch the symbol for ticker data
+      this.marketDataStreamService.watchSymbol(symbol);
+      
+      // Then watch each timeframe
+      for (const timeframe of timeframes) {
+        this.marketDataStreamService.watchSymbolWithInterval(symbol, timeframe as CandleChartInterval);
+      }
+      
+      this.logger.log(`Now watching ${symbol} with timeframes: ${timeframes.join(', ')}`);
+    } catch (error) {
+      this.logger.error(`Error watching symbol ${symbol}`, error);
       throw error;
     }
   }

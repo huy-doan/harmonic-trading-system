@@ -1,28 +1,39 @@
-// 154. src/binances/binance.service.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { MarketDataStreamService } from '@infrastructure/external/binance/market-data-stream.service';
-import { TradingApiService } from '@infrastructure/external/binance/trading-api.service';
-import { BinanceAdapter } from '@infrastructure/external/binance/binance.adapter';
-import { Candlestick } from '@shared/interfaces/market-data.interface';
+import { BinanceApiClient } from '../infrastructure/external/binance/binance.client';
+import { MarketDataStreamService } from '../infrastructure/external/binance/market-data-stream.service';
+import { TradingApiService } from '../infrastructure/external/binance/trading-api.service';
+import { CandleChartInterval } from 'binance-api-node';
 
 @Injectable()
 export class BinanceService {
   private readonly logger = new Logger(BinanceService.name);
 
   constructor(
-    private readonly marketDataStreamService: MarketDataStreamService,
-    private readonly tradingApiService: TradingApiService,
-    private readonly binanceAdapter: BinanceAdapter
+    private readonly binanceClient: BinanceApiClient,
+    private readonly marketDataStream: MarketDataStreamService,
+    private readonly tradingApi: TradingApiService
   ) {}
 
   /**
-   * Get candlestick data for a symbol and timeframe
+   * Get current prices for all symbols or a specific symbol
    */
-  async getCandlesticks(symbol: string, timeframe: string, limit: number = 100): Promise<Candlestick[]> {
+  async getPrices(symbol?: string) {
     try {
-      return await this.marketDataStreamService.getCandlesticks(symbol, timeframe, limit);
+      return await this.binanceClient.getPrices(symbol);
     } catch (error) {
-      this.logger.error(`Failed to get candlesticks for ${symbol} ${timeframe}`, error);
+      this.logger.error(`Error getting prices: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Get 24hr ticker data for all symbols or a specific symbol
+   */
+  async getTicker(symbol?: string) {
+    try {
+      return await this.binanceClient.getTicker24hr(symbol);
+    } catch (error) {
+      this.logger.error(`Error getting ticker: ${error.message}`, error.stack);
       throw error;
     }
   }
@@ -30,157 +41,149 @@ export class BinanceService {
   /**
    * Get historical candlestick data
    */
-  async getHistoricalCandlesticks(
+  async getCandles(
     symbol: string,
-    timeframe: string,
-    startTime: Date,
-    endTime: Date = new Date()
-  ): Promise<Candlestick[]> {
+    interval: CandleChartInterval,
+    options?: {
+      limit?: number;
+      startTime?: number;
+      endTime?: number;
+    }
+  ) {
     try {
-      return await this.marketDataStreamService.getHistoricalCandlesticks(
-        symbol,
-        timeframe,
-        startTime,
-        endTime
-      );
+      return await this.binanceClient.getCandles(symbol, interval, options);
     } catch (error) {
-      this.logger.error(`Failed to get historical candlesticks for ${symbol} ${timeframe}`, error);
+      this.logger.error(`Error getting candles: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Get latest price for a symbol
+   * Get available trading symbols
    */
-  async getLatestPrice(symbol: string): Promise<number> {
+  async getSymbols() {
     try {
-      return await this.marketDataStreamService.getLatestPrice(symbol);
+      const exchangeInfo = await this.binanceClient.getExchangeInfo();
+      return exchangeInfo.symbols.map(symbol => ({
+        symbol: symbol.symbol,
+        baseAsset: symbol.baseAsset,
+        quoteAsset: symbol.quoteAsset,
+        status: symbol.status
+      }));
     } catch (error) {
-      this.logger.error(`Failed to get latest price for ${symbol}`, error);
+      this.logger.error(`Error getting symbols: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Get list of all available trading symbols from Binance
+   * Get account information including balances
    */
-  async getTradingSymbols(): Promise<string[]> {
+  async getAccountInfo() {
     try {
-      const exchangeInfo = await this.binanceAdapter.getExchangeInfo();
-      
-      // Filter out symbols that are not currently trading
-      const tradingSymbols = exchangeInfo.symbols
-        .filter(symbol => symbol.status === 'TRADING')
-        .map(symbol => symbol.symbol);
-      
-      return tradingSymbols;
+      return await this.tradingApi.getAccountInfo();
     } catch (error) {
-      this.logger.error('Failed to get trading symbols', error);
+      this.logger.error(`Error getting account info: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Get list of symbols currently being tracked
+   * Start watching a symbol for price updates
    */
-  getTrackedSymbols(): string[] {
-    return this.marketDataStreamService.getSymbols();
-  }
-
-  /**
-   * Add a new symbol to track
-   */
-  async addTrackedSymbol(symbol: string): Promise<void> {
+  watchSymbol(symbol: string) {
     try {
-      await this.marketDataStreamService.addSymbol(symbol);
+      this.marketDataStream.watchSymbol(symbol);
+      return { success: true, message: `Now watching ${symbol}` };
     } catch (error) {
-      this.logger.error(`Failed to add symbol ${symbol} for tracking`, error);
+      this.logger.error(`Error watching symbol: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Remove a symbol from tracking
+   * Stop watching a symbol
    */
-  removeTrackedSymbol(symbol: string): void {
-    this.marketDataStreamService.removeSymbol(symbol);
-  }
-
-  /**
-   * Get list of all available timeframes
-   */
-  getTimeframes(): string[] {
-    return this.marketDataStreamService.getTimeframes();
-  }
-
-  /**
-   * Check if trading is in simulation mode
-   */
-  isSimulationMode(): boolean {
-    return this.tradingApiService.isSimulation();
-  }
-
-  /**
-   * Get account information
-   */
-  async getAccountInfo(): Promise<any> {
+  unwatchSymbol(symbol: string) {
     try {
-      return await this.tradingApiService.getAccountInfo();
+      this.marketDataStream.unwatchSymbol(symbol);
+      return { success: true, message: `Stopped watching ${symbol}` };
     } catch (error) {
-      this.logger.error('Failed to get account information', error);
+      this.logger.error(`Error unwatching symbol: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Get open orders
+   * Start watching an interval for all watched symbols
    */
-  async getOpenOrders(symbol?: string): Promise<any[]> {
+  watchInterval(interval: CandleChartInterval) {
     try {
-      return await this.tradingApiService.getOpenOrders(symbol);
+      this.marketDataStream.watchInterval(interval);
+      return { success: true, message: `Now watching interval ${interval}` };
     } catch (error) {
-      this.logger.error(`Failed to get open orders${symbol ? ` for ${symbol}` : ''}`, error);
+      this.logger.error(`Error watching interval: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Place a market order
+   * Stop watching an interval
    */
-  async placeMarketOrder(
-    symbol: string,
-    side: 'BUY' | 'SELL',
-    quantity: number
-  ): Promise<any> {
+  unwatchInterval(interval: CandleChartInterval) {
     try {
-      if (side === 'BUY') {
-        return await this.tradingApiService.executeBuyMarketOrder(symbol, quantity);
-      } else {
-        return await this.tradingApiService.executeSellMarketOrder(symbol, quantity);
-      }
+      this.marketDataStream.unwatchInterval(interval);
+      return { success: true, message: `Stopped watching interval ${interval}` };
     } catch (error) {
-      this.logger.error(`Failed to place market ${side} order for ${symbol}`, error);
+      this.logger.error(`Error unwatching interval: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Place a limit order
+   * Create a market buy order
    */
-  async placeLimitOrder(
-    symbol: string,
-    side: 'BUY' | 'SELL',
-    quantity: number,
-    price: number
-  ): Promise<any> {
+  async marketBuy(symbol: string, quantity: string) {
     try {
-      if (side === 'BUY') {
-        return await this.tradingApiService.placeBuyLimitOrder(symbol, quantity, price);
-      } else {
-        return await this.tradingApiService.placeSellLimitOrder(symbol, quantity, price);
-      }
+      return await this.tradingApi.marketBuy(symbol, quantity);
     } catch (error) {
-      this.logger.error(`Failed to place limit ${side} order for ${symbol}`, error);
+      this.logger.error(`Error creating market buy order: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a market sell order
+   */
+  async marketSell(symbol: string, quantity: string) {
+    try {
+      return await this.tradingApi.marketSell(symbol, quantity);
+    } catch (error) {
+      this.logger.error(`Error creating market sell order: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a limit buy order
+   */
+  async limitBuy(symbol: string, quantity: string, price: string, timeInForce?: 'GTC' | 'IOC' | 'FOK') {
+    try {
+      return await this.tradingApi.limitBuy(symbol, quantity, price, timeInForce);
+    } catch (error) {
+      this.logger.error(`Error creating limit buy order: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a limit sell order
+   */
+  async limitSell(symbol: string, quantity: string, price: string, timeInForce?: 'GTC' | 'IOC' | 'FOK') {
+    try {
+      return await this.tradingApi.limitSell(symbol, quantity, price, timeInForce);
+    } catch (error) {
+      this.logger.error(`Error creating limit sell order: ${error.message}`, error.stack);
       throw error;
     }
   }
@@ -188,35 +191,11 @@ export class BinanceService {
   /**
    * Cancel an order
    */
-  async cancelOrder(symbol: string, orderId: number): Promise<any> {
+  async cancelOrder(symbol: string, orderId: number) {
     try {
-      return await this.tradingApiService.cancelOrder(symbol, orderId);
+      return await this.tradingApi.cancelOrder(symbol, orderId);
     } catch (error) {
-      this.logger.error(`Failed to cancel order ${orderId} for ${symbol}`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get exchange information
-   */
-  async getExchangeInfo(symbols?: string[]): Promise<any> {
-    try {
-      return await this.binanceAdapter.getExchangeInfo(symbols);
-    } catch (error) {
-      this.logger.error('Failed to get exchange information', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get 24hr ticker price change statistics
-   */
-  async get24hrTickerPriceChange(symbol?: string): Promise<any> {
-    try {
-      return await this.binanceAdapter.get24hrTickerPriceChange(symbol);
-    } catch (error) {
-      this.logger.error(`Failed to get 24hr ticker price change${symbol ? ` for ${symbol}` : ''}`, error);
+      this.logger.error(`Error canceling order: ${error.message}`, error.stack);
       throw error;
     }
   }

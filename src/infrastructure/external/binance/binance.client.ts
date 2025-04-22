@@ -1,280 +1,191 @@
 // 054. src/infrastructure/external/binance/binance.client.ts
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
-import * as crypto from 'crypto';
-import { BinanceApiError } from '@shared/exceptions/api-error.exception';
+import Binance, { Binance as BinanceClient, CandleChartInterval } from 'binance-api-node';
+import {
+  AccountInfo,
+  BinanceCredentials,
+  CandleData,
+  SymbolPrice,
+  TickerData,
+  TradeOrder
+} from './binance.types';
+import { RateLimiterService } from './rate-limiter';
 
 @Injectable()
-export class BinanceClient {
-  private readonly logger = new Logger(BinanceClient.name);
-  private readonly apiKey: string;
-  private readonly apiSecret: string;
-  private readonly baseUrl: string = 'https://api.binance.com';
-  private readonly client: AxiosInstance;
+export class BinanceApiClient {
+  private readonly logger = new Logger(BinanceApiClient.name);
+  private client: BinanceClient;
 
-  constructor(private readonly configService: ConfigService) {
-    this.apiKey = this.configService.get<string>('BINANCE_API_KEY');
-    this.apiSecret = this.configService.get<string>('BINANCE_API_SECRET');
-    
-    this.client = axios.create({
-      baseURL: this.baseUrl,
-      timeout: 10000,
-      headers: {
-        'X-MBX-APIKEY': this.apiKey,
-      },
+  constructor(
+    private readonly rateLimiter: RateLimiterService
+  ) {}
+
+  /**
+   * Initialize the Binance client with API credentials
+   */
+  public initialize(credentials: BinanceCredentials): void {
+    this.client = Binance({
+      apiKey: credentials.apiKey,
+      apiSecret: credentials.apiSecret,
     });
-
-    // Add response interceptor for error handling
-    this.client.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        if (error.response) {
-          const { status, data } = error.response;
-          
-          this.logger.error(
-            `Binance API error: ${status} - ${data.code} - ${data.msg}`,
-            error.stack
-          );
-          
-          throw new BinanceApiError(data.msg, {
-            statusCode: status,
-            errorCode: `BINANCE_ERROR_${data.code}`,
-            details: data,
-          });
-        }
-        
-        this.logger.error(
-          `Binance API error: ${error.message}`,
-          error.stack
-        );
-        
-        throw new BinanceApiError('Failed to connect to Binance API');
-      }
-    );
+    this.logger.log('Binance API client initialized');
   }
 
   /**
-   * Creates a signature for authenticated requests
+   * Get current prices for all symbols or a specific symbol
    */
-  private createSignature(queryString: string): string {
-    return crypto
-      .createHmac('sha256', this.apiSecret)
-      .update(queryString)
-      .digest('hex');
-  }
-
-  /**
-   * Performs a public GET request to the Binance API
-   */
-  async get<T>(endpoint: string, params?: any): Promise<T> {
+  public async getPrices(symbol?: string): Promise<SymbolPrice | SymbolPrice[]> {
+    await this.rateLimiter.acquireToken('market');
     try {
-      const response: AxiosResponse<T> = await this.client.get(endpoint, { params });
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Performs an authenticated GET request to the Binance API
-   */
-  async getSecure<T>(endpoint: string, params: any = {}): Promise<T> {
-    try {
-      const timestamp = Date.now();
-      const queryParams = {
-        ...params,
-        timestamp,
-      };
-
-      const queryString = new URLSearchParams(queryParams as any).toString();
-      const signature = this.createSignature(queryString);
+      const prices = await this.client.prices({ symbol });
       
-      const response: AxiosResponse<T> = await this.client.get(
-        `${endpoint}?${queryString}&signature=${signature}`
-      );
-      
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Performs an authenticated POST request to the Binance API
-   */
-  async post<T>(endpoint: string, params: any = {}): Promise<T> {
-    try {
-      const timestamp = Date.now();
-      const queryParams = {
-        ...params,
-        timestamp,
-      };
-
-      const queryString = new URLSearchParams(queryParams as any).toString();
-      const signature = this.createSignature(queryString);
-      
-      const response: AxiosResponse<T> = await this.client.post(
-        `${endpoint}?${queryString}&signature=${signature}`
-      );
-      
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Fetches candlestick data from Binance
-   */
-  async getKlines(symbol: string, interval: string, options: {
-    startTime?: number;
-    endTime?: number;
-    limit?: number;
-  } = {}): Promise<any[]> {
-    try {
-      const params = {
-        symbol: symbol.toUpperCase(),
-        interval,
-        ...options,
-      };
-
-      return this.get<any[]>('/api/v3/klines', params);
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Fetches account information
-   */
-  async getAccountInfo(): Promise<any> {
-    try {
-      return this.getSecure<any>('/api/v3/account');
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Fetches exchange information
-   */
-  async getExchangeInfo(symbols?: string[]): Promise<any> {
-    try {
-      const params: any = {};
-      
-      if (symbols && symbols.length > 0) {
-        params.symbols = JSON.stringify(symbols);
-      }
-      
-      return this.get<any>('/api/v3/exchangeInfo', params);
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Places a new order
-   */
-  async createOrder(
-    symbol: string,
-    side: 'BUY' | 'SELL',
-    type: 'LIMIT' | 'MARKET' | 'STOP_LOSS' | 'STOP_LOSS_LIMIT' | 'TAKE_PROFIT' | 'TAKE_PROFIT_LIMIT',
-    options: {
-      timeInForce?: 'GTC' | 'IOC' | 'FOK';
-      quantity?: number;
-      quoteOrderQty?: number;
-      price?: number;
-      newClientOrderId?: string;
-      stopPrice?: number;
-      icebergQty?: number;
-      newOrderRespType?: 'ACK' | 'RESULT' | 'FULL';
-    } = {}
-  ): Promise<any> {
-    try {
-      const params = {
-        symbol: symbol.toUpperCase(),
-        side,
-        type,
-        ...options,
-      };
-      
-      return this.post<any>('/api/v3/order', params);
-    } catch (error) {
-      throw error;
-    }
-  }
-
-  /**
-   * Cancels an existing order
-   */
-  async cancelOrder(symbol: string, orderId?: number, origClientOrderId?: string): Promise<any> {
-    try {
-      const params: any = {
-        symbol: symbol.toUpperCase(),
-      };
-      
-      if (orderId) {
-        params.orderId = orderId;
-      } else if (origClientOrderId) {
-        params.origClientOrderId = origClientOrderId;
+      // Convert the prices object to the expected format
+      if (symbol) {
+        // Single symbol case
+        return { symbol, price: prices[symbol] };
       } else {
-        throw new BinanceApiError('Either orderId or origClientOrderId must be provided');
+        // Multiple symbols case
+        return Object.entries(prices).map(([symbol, price]) => ({
+          symbol,
+          price
+        }));
       }
-      
-      return this.post<any>('/api/v3/order', params);
     } catch (error) {
+      this.logger.error(`Error fetching prices: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Gets current open orders
+   * Get detailed ticker information for all symbols or a specific symbol
    */
-  async getOpenOrders(symbol?: string): Promise<any[]> {
+  public async getTicker24hr(symbol?: string): Promise<TickerData | TickerData[]> {
+    await this.rateLimiter.acquireToken('market');
     try {
-      const params: any = {};
-      
-      if (symbol) {
-        params.symbol = symbol.toUpperCase();
-      }
-      
-      return this.getSecure<any[]>('/api/v3/openOrders', params);
+      return await this.client.dailyStats({ symbol });
     } catch (error) {
+      this.logger.error(`Error fetching 24hr ticker: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Gets 24hr ticker price change statistics
+   * Get historical candlestick data
    */
-  async get24hrTickerPriceChange(symbol?: string): Promise<any> {
+  public async getCandles(
+    symbol: string,
+    interval: CandleChartInterval,
+    options?: {
+      limit?: number;
+      startTime?: number;
+      endTime?: number;
+    }
+  ): Promise<CandleData[]> {
+    await this.rateLimiter.acquireToken('market');
     try {
-      const params: any = {};
-      
-      if (symbol) {
-        params.symbol = symbol.toUpperCase();
-      }
-      
-      return this.get<any>('/api/v3/ticker/24hr', params);
+      const response = await this.client.candles({
+        symbol,
+        interval,
+        limit: options?.limit,
+        startTime: options?.startTime,
+        endTime: options?.endTime,
+      });
+
+      return response.map(candle => ({
+        symbol,
+        interval,
+        openTime: candle.openTime,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        closeTime: candle.closeTime,
+        quoteAssetVolume: candle.quoteAssetVolume,
+        trades: candle.trades,
+        // Fix property names to match what's available in CandleChartResult
+        buyBaseAssetVolume: candle.baseAssetVolume || '0', 
+        buyQuoteAssetVolume: candle.quoteAssetVolume || '0',
+      }));
     } catch (error) {
+      this.logger.error(`Error fetching candles: ${error.message}`, error.stack);
       throw error;
     }
   }
 
   /**
-   * Gets latest price for a symbol or symbols
+   * Get account information
    */
-  async getSymbolPriceTicker(symbol?: string): Promise<any> {
+  public async getAccountInfo(): Promise<AccountInfo> {
+    await this.rateLimiter.acquireToken('account');
     try {
-      const params: any = {};
-      
-      if (symbol) {
-        params.symbol = symbol.toUpperCase();
-      }
-      
-      return this.get<any>('/api/v3/ticker/price', params);
+      const accountInfo = await this.client.accountInfo();
+      return {
+        balances: accountInfo.balances,
+      };
     } catch (error) {
+      this.logger.error(`Error fetching account info: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Create a new order
+   */
+  public async createOrder(order: TradeOrder): Promise<any> {
+    await this.rateLimiter.acquireToken('order');
+    try {
+      const orderParams: any = {
+        symbol: order.symbol,
+        side: order.side,
+        type: order.type,
+        quantity: order.quantity,
+      };
+
+      if (order.price) {
+        orderParams.price = order.price;
+      }
+
+      if (order.timeInForce) {
+        orderParams.timeInForce = order.timeInForce;
+      }
+
+      if (order.stopPrice) {
+        orderParams.stopPrice = order.stopPrice;
+      }
+
+      return await this.client.order(orderParams);
+    } catch (error) {
+      this.logger.error(`Error creating order: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Cancel an order
+   */
+  public async cancelOrder(symbol: string, orderId: number): Promise<any> {
+    await this.rateLimiter.acquireToken('order');
+    try {
+      return await this.client.cancelOrder({
+        symbol,
+        orderId,
+      });
+    } catch (error) {
+      this.logger.error(`Error canceling order: ${error.message}`, error.stack);
+      throw error;
+    }
+  }
+
+  /**
+   * Get exchange information
+   */
+  public async getExchangeInfo(): Promise<any> {
+    await this.rateLimiter.acquireToken('market');
+    try {
+      return await this.client.exchangeInfo();
+    } catch (error) {
+      this.logger.error(`Error fetching exchange info: ${error.message}`, error.stack);
       throw error;
     }
   }

@@ -2,7 +2,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { MarketDataStreamService } from '@infrastructure/external/binance/market-data-stream.service';
-import { Candlestick } from '@shared/interfaces/market-data.interface';
+import { BinanceDataMapperService } from '@infrastructure/external/binance/binance-data-mapper.service';
+import { CandleChartInterval } from 'binance-api-node';
+import { TrendAnalysisResultDto } from '../dtos/market-data.dto';
+import { MarketData } from '../entities/market-data.entity';
 
 @Injectable()
 export class TrendAnalyzerService {
@@ -10,41 +13,61 @@ export class TrendAnalyzerService {
 
   constructor(
     private readonly marketDataStreamService: MarketDataStreamService,
+    private readonly binanceDataMapper: BinanceDataMapperService,
     private readonly eventEmitter: EventEmitter2
   ) {}
 
   /**
    * Analyze market trend for a specific symbol and timeframe
    */
-  async analyzeTrend(symbol: string, timeframe: string): Promise<any> {
+  async analyzeTrend(symbol: string, timeframe: string): Promise<TrendAnalysisResultDto> {
     try {
       this.logger.debug(`Analyzing trend for ${symbol} ${timeframe}`);
       
-      // Get sufficient historical data
-      const candles = await this.marketDataStreamService.getCandlesticks(symbol, timeframe, 200);
+      // Get candlestick data from Binance
+      const candleData = this.marketDataStreamService.getCandleData(
+        symbol, 
+        timeframe as CandleChartInterval
+      );
       
-      if (!candles || candles.length < 50) {
+      if (!candleData || candleData.length < 50) {
         this.logger.warn(`Insufficient data to analyze trend for ${symbol} ${timeframe}`);
         return { 
           symbol, 
           timeframe, 
-          trend: 'UNKNOWN',
-          message: 'Insufficient data'
+          trendDirection: 'SIDEWAYS',
+          strength: 0,
+          supportLevels: [],
+          resistanceLevels: [],
+          timestamp: Date.now()
         };
       }
       
+      // Convert Binance data to market entities
+      const marketEntities = this.binanceDataMapper.mapCandlesToMarketData(candleData);
+      
       // Calculate trend analysis
-      const trendAnalysis = this.calculateTrend(candles);
+      const trendAnalysis = this.calculateTrend(marketEntities);
+      
+      // Map to DTO
+      const trendResult: TrendAnalysisResultDto = {
+        symbol,
+        timeframe,
+        trendDirection: trendAnalysis.overallTrend === 'BULLISH' ? 'UPTREND' : 
+                         trendAnalysis.overallTrend === 'BEARISH' ? 'DOWNTREND' : 'SIDEWAYS',
+        strength: this.convertStrengthToNumber(trendAnalysis.trendStrength),
+        supportLevels: trendAnalysis.keyLevels.support,
+        resistanceLevels: trendAnalysis.keyLevels.resistance,
+        timestamp: Date.now()
+      };
       
       // Emit trend analysis event
       this.eventEmitter.emit('market.trend.analyzed', {
-        symbol,
-        timeframe,
-        trend: trendAnalysis,
-        timestamp: new Date().toISOString()
+        ...trendResult,
+        details: trendAnalysis
       });
       
-      return trendAnalysis;
+      return trendResult;
     } catch (error) {
       this.logger.error(`Error analyzing trend for ${symbol} ${timeframe}`, error);
       throw error;
@@ -54,7 +77,7 @@ export class TrendAnalyzerService {
   /**
    * Calculate trend based on various indicators
    */
-  private calculateTrend(candles: Candlestick[]): any {
+  private calculateTrend(candles: MarketData[]): any {
     // Calculate Simple Moving Averages
     const sma20 = this.calculateSMA(candles, 20);
     const sma50 = this.calculateSMA(candles, 50);
@@ -142,9 +165,25 @@ export class TrendAnalyzerService {
   }
 
   /**
+   * Convert trend strength string to number (0-100)
+   */
+  private convertStrengthToNumber(strengthLabel: string): number {
+    switch (strengthLabel) {
+      case 'STRONG':
+        return 80;
+      case 'MODERATE':
+        return 50;
+      case 'WEAK':
+        return 20;
+      default:
+        return 0;
+    }
+  }
+
+  /**
    * Calculate Simple Moving Average
    */
-  private calculateSMA(candles: Candlestick[], period: number): number {
+  private calculateSMA(candles: MarketData[], period: number): number {
     if (candles.length < period) {
       return 0;
     }
@@ -158,7 +197,7 @@ export class TrendAnalyzerService {
    * Calculate Average Directional Index (ADX)
    * Higher values indicate stronger trend
    */
-  private calculateADX(candles: Candlestick[], period: number): number {
+  private calculateADX(candles: MarketData[], period: number): number {
     if (candles.length < period * 2) {
       return 0;
     }
@@ -233,7 +272,7 @@ export class TrendAnalyzerService {
   /**
    * Calculate momentum as percentage change over a period
    */
-  private calculateMomentum(candles: Candlestick[], period: number): number {
+  private calculateMomentum(candles: MarketData[], period: number): number {
     if (candles.length < period) {
       return 0;
     }
@@ -247,7 +286,7 @@ export class TrendAnalyzerService {
   /**
    * Calculate volatility as average true range percentage
    */
-  private calculateVolatility(candles: Candlestick[], period: number): number {
+  private calculateVolatility(candles: MarketData[], period: number): number {
     if (candles.length < period) {
       return 0;
     }
@@ -274,7 +313,7 @@ export class TrendAnalyzerService {
   /**
    * Detect key support and resistance levels
    */
-  private detectKeyLevels(candles: Candlestick[]): any {
+  private detectKeyLevels(candles: MarketData[]): any {
     const supportLevels = new Set<number>();
     const resistanceLevels = new Set<number>();
     const currentPrice = candles[candles.length - 1].close;

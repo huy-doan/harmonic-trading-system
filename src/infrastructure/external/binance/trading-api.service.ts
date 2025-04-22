@@ -1,266 +1,191 @@
 // 059. src/infrastructure/external/binance/trading-api.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { BinanceAdapter } from './binance.adapter';
-import { BinanceRateLimiter } from './rate-limiter';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BinanceApiClient } from './binance.client';
+import { AccountInfo, BinanceOrderSide, BinanceOrderType, BinanceTimeInForce, TradeOrder } from './binance.types';
 
 @Injectable()
 export class TradingApiService {
   private readonly logger = new Logger(TradingApiService.name);
-  private readonly isSimulationMode: boolean;
+  private isInitialized = false;
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly binanceAdapter: BinanceAdapter,
-    private readonly rateLimiter: BinanceRateLimiter
-  ) {
-    // Check if simulation mode is enabled
-    this.isSimulationMode = this.configService.get<string>('TRADING_MODE') !== 'live';
-    
-    if (this.isSimulationMode) {
-      this.logger.warn('Trading API is running in SIMULATION mode. No real trades will be executed.');
-    } else {
-      this.logger.log('Trading API is running in LIVE mode. Real trades will be executed.');
-    }
-  }
+    private readonly binanceClient: BinanceApiClient,
+    private readonly eventEmitter: EventEmitter2
+  ) {}
 
   /**
-   * Executes a market buy order
+   * Initialize the trading API service
    */
-  async executeBuyMarketOrder(symbol: string, quantity: number): Promise<any> {
-    await this.rateLimiter.acquirePermit('ORDERS');
-    
-    if (this.isSimulationMode) {
-      const currentPrice = await this.binanceAdapter.getLatestPrice(symbol);
-      
-      this.logger.log(`[SIMULATION] Market Buy Order: ${symbol}, Quantity: ${quantity}, Price: ${currentPrice}`);
-      
-      return {
-        symbol,
-        orderId: Math.floor(Math.random() * 1000000),
-        clientOrderId: `sim_${Date.now()}`,
-        transactTime: Date.now(),
-        price: currentPrice,
-        origQty: quantity,
-        executedQty: quantity,
-        status: 'FILLED',
-        type: 'MARKET',
-        side: 'BUY',
-        simulation: true
-      };
+  async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      return;
     }
 
-    try {
-      this.logger.log(`Executing Market Buy Order: ${symbol}, Quantity: ${quantity}`);
-      return await this.binanceAdapter.createMarketOrder(symbol, 'BUY', quantity);
-    } catch (error) {
-      this.logger.error(`Failed to execute buy market order for ${symbol}`, error);
-      throw error;
+    const apiKey = this.configService.get<string>('BINANCE_API_KEY');
+    const apiSecret = this.configService.get<string>('BINANCE_API_SECRET');
+
+    if (!apiKey || !apiSecret) {
+      this.logger.warn('Binance API credentials not found. Trading features will be disabled.');
+      return;
     }
+
+    this.binanceClient.initialize({ apiKey, apiSecret });
+    this.isInitialized = true;
+    this.logger.log('Trading API service initialized');
   }
 
   /**
-   * Executes a market sell order
+   * Get account information including balances
    */
-  async executeSellMarketOrder(symbol: string, quantity: number): Promise<any> {
-    await this.rateLimiter.acquirePermit('ORDERS');
-    
-    if (this.isSimulationMode) {
-      const currentPrice = await this.binanceAdapter.getLatestPrice(symbol);
-      
-      this.logger.log(`[SIMULATION] Market Sell Order: ${symbol}, Quantity: ${quantity}, Price: ${currentPrice}`);
-      
-      return {
-        symbol,
-        orderId: Math.floor(Math.random() * 1000000),
-        clientOrderId: `sim_${Date.now()}`,
-        transactTime: Date.now(),
-        price: currentPrice,
-        origQty: quantity,
-        executedQty: quantity,
-        status: 'FILLED',
-        type: 'MARKET',
-        side: 'SELL',
-        simulation: true
-      };
-    }
-
-    try {
-      this.logger.log(`Executing Market Sell Order: ${symbol}, Quantity: ${quantity}`);
-      return await this.binanceAdapter.createMarketOrder(symbol, 'SELL', quantity);
-    } catch (error) {
-      this.logger.error(`Failed to execute sell market order for ${symbol}`, error);
-      throw error;
-    }
+  async getAccountInfo(): Promise<AccountInfo> {
+    await this.ensureInitialized();
+    return this.binanceClient.getAccountInfo();
   }
 
   /**
-   * Places a limit buy order
+   * Create a market buy order
    */
-  async placeBuyLimitOrder(symbol: string, quantity: number, price: number): Promise<any> {
-    await this.rateLimiter.acquirePermit('ORDERS');
+  async marketBuy(symbol: string, quantity: string): Promise<any> {
+    await this.ensureInitialized();
     
-    if (this.isSimulationMode) {
-      this.logger.log(`[SIMULATION] Limit Buy Order: ${symbol}, Quantity: ${quantity}, Price: ${price}`);
-      
-      return {
-        symbol,
-        orderId: Math.floor(Math.random() * 1000000),
-        clientOrderId: `sim_${Date.now()}`,
-        transactTime: Date.now(),
-        price: price,
-        origQty: quantity,
-        executedQty: 0,
-        status: 'NEW',
-        type: 'LIMIT',
-        side: 'BUY',
-        simulation: true
-      };
-    }
+    const order: TradeOrder = {
+      symbol,
+      side: 'BUY',
+      type: 'MARKET',
+      quantity,
+    };
 
-    try {
-      this.logger.log(`Placing Limit Buy Order: ${symbol}, Quantity: ${quantity}, Price: ${price}`);
-      return await this.binanceAdapter.createLimitOrder(symbol, 'BUY', quantity, price);
-    } catch (error) {
-      this.logger.error(`Failed to place buy limit order for ${symbol}`, error);
-      throw error;
-    }
+    const result = await this.binanceClient.createOrder(order);
+    this.eventEmitter.emit('trade.executed', { type: 'market-buy', symbol, quantity, result });
+    return result;
   }
 
   /**
-   * Places a limit sell order
+   * Create a market sell order
    */
-  async placeSellLimitOrder(symbol: string, quantity: number, price: number): Promise<any> {
-    await this.rateLimiter.acquirePermit('ORDERS');
+  async marketSell(symbol: string, quantity: string): Promise<any> {
+    await this.ensureInitialized();
     
-    if (this.isSimulationMode) {
-      this.logger.log(`[SIMULATION] Limit Sell Order: ${symbol}, Quantity: ${quantity}, Price: ${price}`);
-      
-      return {
-        symbol,
-        orderId: Math.floor(Math.random() * 1000000),
-        clientOrderId: `sim_${Date.now()}`,
-        transactTime: Date.now(),
-        price: price,
-        origQty: quantity,
-        executedQty: 0,
-        status: 'NEW',
-        type: 'LIMIT',
-        side: 'SELL',
-        simulation: true
-      };
-    }
+    const order: TradeOrder = {
+      symbol,
+      side: 'SELL',
+      type: 'MARKET',
+      quantity,
+    };
 
-    try {
-      this.logger.log(`Placing Limit Sell Order: ${symbol}, Quantity: ${quantity}, Price: ${price}`);
-      return await this.binanceAdapter.createLimitOrder(symbol, 'SELL', quantity, price);
-    } catch (error) {
-      this.logger.error(`Failed to place sell limit order for ${symbol}`, error);
-      throw error;
-    }
+    const result = await this.binanceClient.createOrder(order);
+    this.eventEmitter.emit('trade.executed', { type: 'market-sell', symbol, quantity, result });
+    return result;
   }
 
   /**
-   * Cancels an existing order
+   * Create a limit buy order
+   */
+  async limitBuy(symbol: string, quantity: string, price: string, timeInForce?: 'GTC' | 'IOC' | 'FOK'): Promise<any> {
+    await this.ensureInitialized();
+    
+    const order: TradeOrder = {
+      symbol,
+      side: 'BUY',
+      type: 'LIMIT',
+      quantity,
+      price,
+      timeInForce: timeInForce as any, // Fix: Accept string literals for timeInForce
+    };
+
+    const result = await this.binanceClient.createOrder(order);
+    this.eventEmitter.emit('trade.executed', { type: 'limit-buy', symbol, quantity, price, result });
+    return result;
+  }
+
+  /**
+   * Create a limit sell order
+   */
+  async limitSell(symbol: string, quantity: string, price: string, timeInForce?: 'GTC' | 'IOC' | 'FOK'): Promise<any> {
+    await this.ensureInitialized();
+    
+    const order: TradeOrder = {
+      symbol,
+      side: 'SELL',
+      type: 'LIMIT',
+      quantity,
+      price,
+      timeInForce: timeInForce as any, // Fix: Accept string literals for timeInForce
+    };
+
+    const result = await this.binanceClient.createOrder(order);
+    this.eventEmitter.emit('trade.executed', { type: 'limit-sell', symbol, quantity, price, result });
+    return result;
+  }
+
+  /**
+   * Create a stop-loss order
+   */
+  async stopLoss(symbol: string, quantity: string, stopPrice: string): Promise<any> {
+    await this.ensureInitialized();
+    
+    const order: TradeOrder = {
+      symbol,
+      side: 'SELL',
+      type: 'STOP_LOSS',
+      quantity,
+      stopPrice,
+    };
+
+    const result = await this.binanceClient.createOrder(order);
+    this.eventEmitter.emit('trade.executed', { type: 'stop-loss', symbol, quantity, stopPrice, result });
+    return result;
+  }
+
+  /**
+   * Create a take-profit order
+   */
+  async takeProfit(symbol: string, quantity: string, stopPrice: string): Promise<any> {
+    await this.ensureInitialized();
+    
+    const order: TradeOrder = {
+      symbol,
+      side: 'SELL',
+      type: 'TAKE_PROFIT',
+      quantity,
+      stopPrice,
+    };
+
+    const result = await this.binanceClient.createOrder(order);
+    this.eventEmitter.emit('trade.executed', { type: 'take-profit', symbol, quantity, stopPrice, result });
+    return result;
+  }
+
+  /**
+   * Cancel an order
    */
   async cancelOrder(symbol: string, orderId: number): Promise<any> {
-    await this.rateLimiter.acquirePermit('ORDERS');
-    
-    if (this.isSimulationMode) {
-      this.logger.log(`[SIMULATION] Cancel Order: ${symbol}, OrderId: ${orderId}`);
-      
-      return {
-        symbol,
-        orderId,
-        status: 'CANCELED',
-        clientOrderId: `sim_${orderId}`,
-        simulation: true
-      };
-    }
-
-    try {
-      this.logger.log(`Canceling Order: ${symbol}, OrderId: ${orderId}`);
-      return await this.binanceAdapter.cancelOrder(symbol, orderId);
-    } catch (error) {
-      this.logger.error(`Failed to cancel order ${orderId} for ${symbol}`, error);
-      throw error;
-    }
+    await this.ensureInitialized();
+    const result = await this.binanceClient.cancelOrder(symbol, orderId);
+    this.eventEmitter.emit('order.canceled', { symbol, orderId, result });
+    return result;
   }
 
   /**
-   * Get open orders for a symbol
+   * Get exchange information
    */
-  async getOpenOrders(symbol?: string): Promise<any[]> {
-    await this.rateLimiter.acquirePermit('REQUEST_WEIGHT', 3);
-    
-    if (this.isSimulationMode) {
-      this.logger.log(`[SIMULATION] Get Open Orders${symbol ? ` for ${symbol}` : ''}`);
-      return []; // Return empty array in simulation mode
-    }
-
-    try {
-      return await this.binanceAdapter.getOpenOrders(symbol);
-    } catch (error) {
-      this.logger.error(`Failed to get open orders${symbol ? ` for ${symbol}` : ''}`, error);
-      throw error;
-    }
+  async getExchangeInfo(): Promise<any> {
+    await this.ensureInitialized();
+    return this.binanceClient.getExchangeInfo();
   }
 
   /**
-   * Get account information
+   * Helper method to ensure the service is initialized
    */
-  async getAccountInfo(): Promise<any> {
-    await this.rateLimiter.acquirePermit('REQUEST_WEIGHT', 10);
-    
-    if (this.isSimulationMode) {
-      // Return simulated account info
-      const simulatedBalance = parseFloat(this.configService.get<string>('SIMULATION_BALANCE', '10000'));
-      
-      this.logger.log(`[SIMULATION] Get Account Info - Simulated Balance: ${simulatedBalance} USDT`);
-      
-      return {
-        makerCommission: 10,
-        takerCommission: 10,
-        buyerCommission: 0,
-        sellerCommission: 0,
-        canTrade: true,
-        canWithdraw: false,
-        canDeposit: false,
-        updateTime: Date.now(),
-        accountType: 'SPOT',
-        balances: [
-          {
-            asset: 'USDT',
-            free: simulatedBalance.toString(),
-            locked: '0.00000000'
-          },
-          {
-            asset: 'BTC',
-            free: '0.00000000',
-            locked: '0.00000000'
-          },
-          {
-            asset: 'ETH',
-            free: '0.00000000',
-            locked: '0.00000000'
-          }
-        ],
-        simulation: true
-      };
+  private async ensureInitialized(): Promise<void> {
+    if (!this.isInitialized) {
+      await this.initialize();
+      if (!this.isInitialized) {
+        throw new Error('Trading API service is not initialized. Check your API credentials.');
+      }
     }
-
-    try {
-      return await this.binanceAdapter.getAccountInfo();
-    } catch (error) {
-      this.logger.error('Failed to get account information', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Check if trading is currently in simulation mode
-   */
-  isSimulation(): boolean {
-    return this.isSimulationMode;
   }
 }
