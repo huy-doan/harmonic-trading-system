@@ -11,11 +11,11 @@ import { TradeExecutorTask } from './trade-executor.task';
 
 import { QueueModule } from '@infrastructure/queue/queue.module';
 import { EventBusModule } from '@infrastructure/event-bus/event-bus.module';
-import { BinanceModule } from '@/binances/binance.module';
 import { HarmonicPatternModule } from '@domain/harmonic-patterns/harmonic-pattern.module';
 import { MarketAnalysisModule } from '@domain/market-analysis/market-analysis.module';
 
 import { QUEUE_NAMES } from '@config/queue.config';
+import { BinanceModule } from 'src/binances/binance.module';
 
 @Module({
   imports: [

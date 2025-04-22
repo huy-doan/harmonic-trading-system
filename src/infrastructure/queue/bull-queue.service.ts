@@ -111,7 +111,7 @@ export class BullQueueService extends QueueService implements OnModuleDestroy {
     const gracePeriod = 0; // Xóa ngay lập tức
     
     if (status) {
-      return await queue.clean(gracePeriod, status);
+      return (await queue.clean(gracePeriod, status)).length;
     } else {
       // Xóa tất cả các trạng thái
       const statuses: ('completed' | 'failed' | 'delayed' | 'active' | 'wait')[] = [
@@ -119,10 +119,9 @@ export class BullQueueService extends QueueService implements OnModuleDestroy {
       ];
       
       let totalRemoved = 0;
-      
       for (const jobStatus of statuses) {
         const removed = await queue.clean(gracePeriod, jobStatus);
-        totalRemoved += removed;
+        totalRemoved += removed.length;
       }
       
       return totalRemoved;
@@ -136,7 +135,7 @@ export class BullQueueService extends QueueService implements OnModuleDestroy {
     const queue = this.getQueue(queueName);
     
     if (status) {
-      return await queue.getJobs([status]);
+      return await queue.getJobs([status as any]);
     } else {
       // Lấy tất cả các trạng thái
       const statuses: ('completed' | 'failed' | 'delayed' | 'active' | 'wait')[] = [
@@ -146,7 +145,7 @@ export class BullQueueService extends QueueService implements OnModuleDestroy {
       const allJobs = [];
       
       for (const jobStatus of statuses) {
-        const jobs = await queue.getJobs([jobStatus]);
+        const jobs = await queue.getJobs([jobStatus as any]);
         allJobs.push(...jobs);
       }
       

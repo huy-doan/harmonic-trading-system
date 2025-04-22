@@ -59,9 +59,9 @@ export class TasksService implements OnModuleInit {
       this.tasks.set(name, {
         name,
         description: this.getTaskDescription(name),
-        pattern: job.cronTime.source,
+        pattern: job.cronTime.source as string,
         lastRun: null,
-        nextRun: job.nextDate().toDate(),
+        nextRun: job.nextDate().toJSDate(),
         status: isEnabled ? 'active' : 'disabled',
       });
 
@@ -90,7 +90,7 @@ export class TasksService implements OnModuleInit {
         if (this.tasks.has(name)) {
           const taskInfo = this.tasks.get(name);
           taskInfo.lastRun = new Date();
-          taskInfo.nextRun = job.nextDate().toDate();
+          taskInfo.nextRun = job.nextDate().toJSDate();
         }
 
         this.logger.debug(`Task ${name} completed in ${Date.now() - startTime}ms`);
@@ -108,7 +108,7 @@ export class TasksService implements OnModuleInit {
       description,
       pattern,
       lastRun: null,
-      nextRun: job.nextDate().toDate(),
+      nextRun: job.nextDate().toJSDate(),
       status: isEnabled ? 'active' : 'disabled',
     });
 
@@ -132,7 +132,7 @@ export class TasksService implements OnModuleInit {
       if (this.tasks.has(name)) {
         const taskInfo = this.tasks.get(name);
         taskInfo.status = 'active';
-        taskInfo.nextRun = job.nextDate().toDate();
+        taskInfo.nextRun = job.nextDate().toJSDate();
         this.logger.log(`Task ${name} enabled`);
       }
 

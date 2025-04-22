@@ -1,4 +1,5 @@
 // 165. src/tasks/market-analyzer.task.ts
+// TODO: generate this file
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectQueue } from '@nestjs/bull';
@@ -198,4 +199,4 @@ export class MarketAnalyzerTask {
       throw error;
     }
   }
-  
+}

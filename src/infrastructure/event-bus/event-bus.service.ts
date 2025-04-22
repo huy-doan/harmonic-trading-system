@@ -37,7 +37,11 @@ export class EventBusService {
     // Đăng ký listener xử lý tất cả các sự kiện
     this.eventEmitter.onAny((event, payload) => {
       this.logger.debug(`Event received: ${event}`);
-      this.processEvent(event, payload);
+      if (typeof event === 'string') {
+        this.processEvent(event, payload);
+      } else {
+        this.logger.error(`Invalid event type: ${typeof event}`);
+      }
     });
   }
 
