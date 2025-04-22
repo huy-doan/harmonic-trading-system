@@ -1,11 +1,10 @@
 // 126. src/domain/risk-management/services/position-sizer.service.ts
-// TODO: generate lại
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RiskProfile } from '../entities/risk-profile.entity';
 import { ConfigService } from '@nestjs/config';
-import { MarketDataStreamService } from '@infrastructure/external/binance/market-data-stream.service';
+import { BinanceAdapter } from '@infrastructure/external/binance/binance.adapter';
 
 interface PositionSizeParams {
   symbol: string;
@@ -16,7 +15,7 @@ interface PositionSizeParams {
   maxPositionSizePercent?: number;
 }
 
-interface PositionSizeResult {
+export interface PositionSizeResult {
   quantity: number;
   positionValue: number;
   riskAmount: number;
@@ -33,7 +32,7 @@ export class PositionSizerService {
     @InjectRepository(RiskProfile)
     private readonly riskProfileRepository: Repository<RiskProfile>,
     private readonly configService: ConfigService,
-    private readonly marketDataService: MarketDataStreamService
+    private readonly binanceAdapter: BinanceAdapter
   ) {
     // Lấy giá trị rủi ro mặc định từ cấu hình
     this.defaultRiskPercentage = parseFloat(
@@ -170,35 +169,73 @@ export class PositionSizerService {
     }
   }
 
-  // Lấy hồ sơ rủi ro của người dùng
-    private async getRiskProfile(userId: string): Promise<RiskProfile | null> {
-        try {
-        return await this.riskProfileRepository.findOne({
-            where: { userId },
-            order: { createdAt: 'DESC' }
-        });
-        } catch (error) {
-        this.logger.error(`Error fetching risk profile for user ${userId}: ${error.message}`, error.stack);
-        return null;
-        }
+  /**
+   * Lấy hồ sơ rủi ro của người dùng
+   */
+  private async getRiskProfile(userId: string): Promise<RiskProfile | null> {
+    try {
+      return await this.riskProfileRepository.findOne({
+        where: { userId },
+        order: { createdAt: 'DESC' }
+      });
+    } catch (error) {
+      this.logger.error(`Error fetching risk profile for user ${userId}: ${error.message}`, error.stack);
+      return null;
     }
+  }
 
-    /**
-     * Làm tròn số lượng theo độ chính xác của symbol
-     *  
-     * @param symbol Ticker của symbol
-     * @param quantity Số lượng cần làm tròn
-     * @return Số lượng đã làm tròn
-     * */
-    private async roundQuantityToValidPrecision(symbol: string, quantity: number): Promise<number> {
-        try {
-            const symbolInfo = await this.marketDataService.getSymbolInfo(symbol);
-            const stepSize = symbolInfo.filters.find((filter) => filter.filterType === 'LOT_SIZE').stepSize;
-            const precision = Math.log10(1 / stepSize);
-            return parseFloat(quantity.toFixed(precision));
-        } catch (error) {
-            this.logger.error(`Error rounding quantity for ${symbol}: ${error.message}`, error.stack);
-            throw error;
-        }
+  /**
+   * Làm tròn số lượng theo độ chính xác của symbol
+   */
+  private async roundQuantityToValidPrecision(symbol: string, quantity: number): Promise<number> {
+    try {
+      // Lấy thông tin symbol từ Binance
+      const exchangeInfo = await this.binanceAdapter.getExchangeInfo([symbol]);
+      const symbolInfo = exchangeInfo.symbols.find(s => s.symbol === symbol);
+      
+      if (!symbolInfo) {
+        throw new Error(`Symbol ${symbol} not found in exchange info`);
+      }
+      
+      // Tìm bộ lọc LOT_SIZE để lấy stepSize
+      const lotSizeFilter = symbolInfo.filters.find(filter => filter.filterType === 'LOT_SIZE');
+      
+      if (!lotSizeFilter) {
+        this.logger.warn(`LOT_SIZE filter not found for ${symbol}, using default precision`);
+        return Math.floor(quantity * 100000) / 100000; // Mặc định làm tròn đến 5 chữ số thập phân
+      }
+      
+      const stepSize = parseFloat(lotSizeFilter.stepSize);
+      
+      // Tính toán số chữ số thập phân
+      const precision = this.getPrecisionFromStepSize(stepSize);
+      
+      // Làm tròn theo stepSize
+      const roundedQuantity = Math.floor(quantity / stepSize) * stepSize;
+      
+      // Làm tròn số chữ số thập phân
+      return parseFloat(roundedQuantity.toFixed(precision));
+    } catch (error) {
+      this.logger.error(`Error rounding quantity for ${symbol}: ${error.message}`, error.stack);
+      // Trả về giá trị mặc định làm tròn khi có lỗi
+      return Math.floor(quantity * 1000) / 1000; // Làm tròn đến 3 chữ số thập phân
     }
+  }
+
+  /**
+   * Lấy số chữ số thập phân từ stepSize
+   */
+  private getPrecisionFromStepSize(stepSize: number): number {
+    if (stepSize === 0) return 0;
+    
+    let precision = 0;
+    let tempStepSize = stepSize;
+    
+    while (tempStepSize < 1) {
+      precision++;
+      tempStepSize *= 10;
+    }
+    
+    return precision;
+  }
 }
