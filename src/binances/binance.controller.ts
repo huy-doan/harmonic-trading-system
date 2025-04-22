@@ -1,168 +1,125 @@
-// 153. src/binances/binance.controller.ts
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiParam, ApiQuery, ApiResponse } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { BinanceService } from './binance.service';
-import { ParsePositiveIntPipe } from '@shared/pipes/parse-int.pipe';
+import { CandleChartInterval } from 'binance-api-node';
 
-@ApiTags('Binance')
+@ApiTags('binance')
 @Controller('binance')
 export class BinanceController {
   constructor(private readonly binanceService: BinanceService) {}
 
-  @Get('market/candles')
-  @ApiOperation({ summary: 'Get candlestick data for a symbol and timeframe' })
-  @ApiQuery({ name: 'symbol', required: true, description: 'Trading symbol (e.g., BTCUSDT)' })
-  @ApiQuery({ name: 'timeframe', required: true, description: 'Candlestick interval (e.g., 1m, 5m, 1h)' })
-  @ApiQuery({ name: 'limit', required: false, description: 'Number of candles to return' })
-  async getCandlesticks(
+  @Get('prices')
+  @ApiOperation({ summary: 'Get current prices for all symbols or a specific symbol' })
+  @ApiQuery({ name: 'symbol', required: false, description: 'Symbol to get price for (e.g. BTCUSDT)' })
+  @ApiResponse({ status: 200, description: 'Returns current prices' })
+  async getPrices(@Query('symbol') symbol?: string) {
+    return this.binanceService.getPrices(symbol);
+  }
+
+  @Get('ticker')
+  @ApiOperation({ summary: 'Get 24hr ticker data for all symbols or a specific symbol' })
+  @ApiQuery({ name: 'symbol', required: false, description: 'Symbol to get ticker for (e.g. BTCUSDT)' })
+  @ApiResponse({ status: 200, description: 'Returns 24hr ticker data' })
+  async getTicker(@Query('symbol') symbol?: string) {
+    return this.binanceService.getTicker(symbol);
+  }
+
+  @Get('candles')
+  @ApiOperation({ summary: 'Get historical candlestick data' })
+  @ApiQuery({ name: 'symbol', required: true, description: 'Symbol (e.g. BTCUSDT)' })
+  @ApiQuery({ name: 'interval', required: true, description: 'Candlestick interval (e.g. 1m, 5m, 1h, 1d)' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Limit of results (default: 500, max: 1000)' })
+  @ApiQuery({ name: 'startTime', required: false, description: 'Start time in milliseconds' })
+  @ApiQuery({ name: 'endTime', required: false, description: 'End time in milliseconds' })
+  @ApiResponse({ status: 200, description: 'Returns candlestick data' })
+  async getCandles(
     @Query('symbol') symbol: string,
-    @Query('timeframe') timeframe: string,
-    @Query('limit', new ParsePositiveIntPipe()) limit: number = 100
+    @Query('interval') interval: CandleChartInterval,
+    @Query('limit') limit?: number,
+    @Query('startTime') startTime?: number,
+    @Query('endTime') endTime?: number,
   ) {
-    return this.binanceService.getCandlesticks(symbol, timeframe, limit);
+    return this.binanceService.getCandles(symbol, interval, { limit, startTime, endTime });
   }
 
-  @Get('market/price')
-  @ApiOperation({ summary: 'Get latest price for a symbol' })
-  @ApiQuery({ name: 'symbol', required: true, description: 'Trading symbol (e.g., BTCUSDT)' })
-  async getLatestPrice(@Query('symbol') symbol: string) {
-    const price = await this.binanceService.getLatestPrice(symbol);
-    return { symbol, price };
-  }
-
-  @Get('market/symbols')
+  @Get('symbols')
   @ApiOperation({ summary: 'Get available trading symbols' })
-  async getTradingSymbols() {
-    return this.binanceService.getTradingSymbols();
-  }
-
-  @Get('market/tracked-symbols')
-  @ApiOperation({ summary: 'Get currently tracked symbols' })
-  async getTrackedSymbols() {
-    return this.binanceService.getTrackedSymbols();
-  }
-
-  @Post('market/symbols')
-  @ApiOperation({ summary: 'Add a new symbol to track' })
-  async addTrackedSymbol(@Body() data: { symbol: string }) {
-    await this.binanceService.addTrackedSymbol(data.symbol);
-    return { success: true, message: `Symbol ${data.symbol} is now being tracked` };
-  }
-
-  @Delete('market/symbols/:symbol')
-  @ApiOperation({ summary: 'Remove a symbol from tracking' })
-  @ApiParam({ name: 'symbol', description: 'Symbol to stop tracking' })
-  async removeTrackedSymbol(@Param('symbol') symbol: string) {
-    this.binanceService.removeTrackedSymbol(symbol);
-    return { success: true, message: `Symbol ${symbol} is no longer being tracked` };
-  }
-
-  @Get('market/timeframes')
-  @ApiOperation({ summary: 'Get available timeframes' })
-  async getTimeframes() {
-    return this.binanceService.getTimeframes();
+  @ApiResponse({ status: 200, description: 'Returns available trading symbols' })
+  async getSymbols() {
+    return this.binanceService.getSymbols();
   }
 
   @Get('account')
-  @ApiOperation({ summary: 'Get account information' })
+  @ApiOperation({ summary: 'Get account information including balances' })
+  @ApiResponse({ status: 200, description: 'Returns account information' })
   async getAccountInfo() {
     return this.binanceService.getAccountInfo();
   }
 
-  @Get('trading/status')
-  @ApiOperation({ summary: 'Get trading mode status' })
-  async getTradingStatus() {
-    const isSimulation = this.binanceService.isSimulationMode();
-    return {
-      mode: isSimulation ? 'simulation' : 'live',
-      message: isSimulation 
-        ? 'Trading is in simulation mode. No real trades will be executed.' 
-        : 'Trading is in live mode. Real trades will be executed.'
-    };
+  @Post('watch/symbol')
+  @ApiOperation({ summary: 'Start watching a symbol for price updates' })
+  @ApiResponse({ status: 200, description: 'Symbol is now being watched' })
+  async watchSymbol(@Body() body: { symbol: string }) {
+    return this.binanceService.watchSymbol(body.symbol);
   }
 
-  @Get('orders')
-  @ApiOperation({ summary: 'Get open orders' })
-  @ApiQuery({ name: 'symbol', required: false, description: 'Trading symbol (e.g., BTCUSDT)' })
-  async getOpenOrders(@Query('symbol') symbol?: string) {
-    return this.binanceService.getOpenOrders(symbol);
+  @Delete('watch/symbol/:symbol')
+  @ApiOperation({ summary: 'Stop watching a symbol' })
+  @ApiParam({ name: 'symbol', description: 'Symbol to stop watching (e.g. BTCUSDT)' })
+  @ApiResponse({ status: 200, description: 'Symbol is no longer being watched' })
+  async unwatchSymbol(@Param('symbol') symbol: string) {
+    return this.binanceService.unwatchSymbol(symbol);
   }
 
-  @Post('orders/market')
-  @ApiOperation({ summary: 'Place a market order' })
-  async placeMarketOrder(
-    @Body() order: { 
-      symbol: string; 
-      side: 'BUY' | 'SELL'; 
-      quantity: number;
-    }
-  ) {
-    return this.binanceService.placeMarketOrder(
-      order.symbol, 
-      order.side,
-      order.quantity
-    );
+  @Post('watch/interval')
+  @ApiOperation({ summary: 'Start watching an interval for all watched symbols' })
+  @ApiResponse({ status: 200, description: 'Interval is now being watched' })
+  async watchInterval(@Body() body: { interval: CandleChartInterval }) {
+    return this.binanceService.watchInterval(body.interval);
   }
 
-  @Post('orders/limit')
-  @ApiOperation({ summary: 'Place a limit order' })
-  async placeLimitOrder(
-    @Body() order: { 
-      symbol: string; 
-      side: 'BUY' | 'SELL'; 
-      quantity: number;
-      price: number;
-    }
-  ) {
-    return this.binanceService.placeLimitOrder(
-      order.symbol, 
-      order.side,
-      order.quantity,
-      order.price
-    );
+  @Delete('watch/interval/:interval')
+  @ApiOperation({ summary: 'Stop watching an interval' })
+  @ApiParam({ name: 'interval', description: 'Interval to stop watching (e.g. 1m, 5m, 1h, 1d)' })
+  @ApiResponse({ status: 200, description: 'Interval is no longer being watched' })
+  async unwatchInterval(@Param('interval') interval: CandleChartInterval) {
+    return this.binanceService.unwatchInterval(interval);
+  }
+
+  @Post('orders/market-buy')
+  @ApiOperation({ summary: 'Create a market buy order' })
+  @ApiResponse({ status: 200, description: 'Order created successfully' })
+  async marketBuy(@Body() body: { symbol: string; quantity: string }) {
+    return this.binanceService.marketBuy(body.symbol, body.quantity);
+  }
+
+  @Post('orders/market-sell')
+  @ApiOperation({ summary: 'Create a market sell order' })
+  @ApiResponse({ status: 200, description: 'Order created successfully' })
+  async marketSell(@Body() body: { symbol: string; quantity: string }) {
+    return this.binanceService.marketSell(body.symbol, body.quantity);
+  }
+
+  @Post('orders/limit-buy')
+  @ApiOperation({ summary: 'Create a limit buy order' })
+  @ApiResponse({ status: 200, description: 'Order created successfully' })
+  async limitBuy(@Body() body: { symbol: string; quantity: string; price: string; timeInForce?: 'GTC' | 'IOC' | 'FOK' }) {
+    return this.binanceService.limitBuy(body.symbol, body.quantity, body.price, body.timeInForce);
+  }
+
+  @Post('orders/limit-sell')
+  @ApiOperation({ summary: 'Create a limit sell order' })
+  @ApiResponse({ status: 200, description: 'Order created successfully' })
+  async limitSell(@Body() body: { symbol: string; quantity: string; price: string; timeInForce?: 'GTC' | 'IOC' | 'FOK' }) {
+    return this.binanceService.limitSell(body.symbol, body.quantity, body.price, body.timeInForce);
   }
 
   @Delete('orders/:symbol/:orderId')
   @ApiOperation({ summary: 'Cancel an order' })
-  @ApiParam({ name: 'symbol', description: 'Trading symbol (e.g., BTCUSDT)' })
+  @ApiParam({ name: 'symbol', description: 'Symbol (e.g. BTCUSDT)' })
   @ApiParam({ name: 'orderId', description: 'Order ID to cancel' })
-  async cancelOrder(
-    @Param('symbol') symbol: string,
-    @Param('orderId', new ParsePositiveIntPipe()) orderId: number
-  ) {
+  @ApiResponse({ status: 200, description: 'Order canceled successfully' })
+  async cancelOrder(@Param('symbol') symbol: string, @Param('orderId') orderId: number) {
     return this.binanceService.cancelOrder(symbol, orderId);
-  }
-
-  @Get('exchange-info')
-  @ApiOperation({ summary: 'Get exchange information' })
-  @ApiQuery({ name: 'symbols', required: false, description: 'Comma-separated list of symbols' })
-  async getExchangeInfo(@Query('symbols') symbolsQuery?: string) {
-    const symbols = symbolsQuery ? symbolsQuery.split(',') : undefined;
-    return this.binanceService.getExchangeInfo(symbols);
-  }
-
-  @Get('market/historical')
-  @ApiOperation({ summary: 'Get historical candlestick data' })
-  @ApiQuery({ name: 'symbol', required: true, description: 'Trading symbol (e.g., BTCUSDT)' })
-  @ApiQuery({ name: 'timeframe', required: true, description: 'Candlestick interval (e.g., 1m, 5m, 1h)' })
-  @ApiQuery({ name: 'startTime', required: true, description: 'Start time in ISO format or timestamp' })
-  @ApiQuery({ name: 'endTime', required: false, description: 'End time in ISO format or timestamp' })
-  async getHistoricalCandlesticks(
-    @Query('symbol') symbol: string,
-    @Query('timeframe') timeframe: string,
-    @Query('startTime') startTime: string,
-    @Query('endTime') endTime?: string
-  ) {
-    const startDate = new Date(startTime);
-    const endDate = endTime ? new Date(endTime) : new Date();
-    
-    return this.binanceService.getHistoricalCandlesticks(symbol, timeframe, startDate, endDate);
-  }
-
-  @Get('market/24hr')
-  @ApiOperation({ summary: 'Get 24hr ticker price change statistics' })
-  @ApiQuery({ name: 'symbol', required: false, description: 'Trading symbol (e.g., BTCUSDT)' })
-  async get24hrTickerPriceChange(@Query('symbol') symbol?: string) {
-    return this.binanceService.get24hrTickerPriceChange(symbol);
   }
 }

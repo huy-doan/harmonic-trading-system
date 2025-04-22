@@ -1,261 +1,288 @@
 // 055. src/infrastructure/external/binance/binance-websocket.client.ts
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import * as WebSocket from 'ws';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Injectable, Logger } from '@nestjs/common';
+import Binance, { ReconnectingWebSocketHandler } from 'binance-api-node';
+import { EventEmitter } from 'events';
+import { BinanceCredentials, StreamSubscription } from './binance.types';
+import { CandleChartInterval } from 'binance-api-node';
 
 @Injectable()
-export class BinanceWebsocketClient implements OnModuleInit, OnModuleDestroy {
+export class BinanceWebsocketClient {
   private readonly logger = new Logger(BinanceWebsocketClient.name);
-  private readonly baseUrl: string = 'wss://stream.binance.com:9443/ws';
-  private ws: WebSocket | null = null;
-  private pingInterval: NodeJS.Timeout | null = null;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
-  private subscriptions: string[] = [];
-  private isConnected: boolean = false;
-  private reconnectAttempts: number = 0;
-  private readonly maxReconnectAttempts: number = 10;
-  private readonly reconnectDelay: number = 5000;
+  private client: ReturnType<typeof Binance>;
+  private eventEmitter: EventEmitter = new EventEmitter();
+  private subscriptions: Map<string, StreamSubscription> = new Map();
+  private wsHandlers: Map<string, ReconnectingWebSocketHandler | Promise<ReconnectingWebSocketHandler>> = new Map();
 
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly eventEmitter: EventEmitter2,
-  ) {}
-
-  onModuleInit() {
-    this.connect();
+  constructor() {
+    this.eventEmitter.setMaxListeners(100); // Increase max listeners to handle multiple subscriptions
   }
 
-  onModuleDestroy() {
-    this.disconnect();
+  /**
+   * Initialize the Binance WebSocket client
+   */
+  public initialize(credentials?: BinanceCredentials): void {
+    this.client = Binance(credentials || {});
+    this.logger.log('Binance WebSocket client initialized');
   }
 
-  private connect() {
+  /**
+   * Subscribe to candlestick/kline updates for a symbol and interval
+   */
+  public subscribeToKlines(symbol: string, interval: CandleChartInterval): StreamSubscription {
+    const id = `kline_${symbol.toLowerCase()}_${interval}`;
+    
+    if (this.subscriptions.has(id)) {
+      return this.subscriptions.get(id);
+    }
+
     try {
-      this.logger.log('Connecting to Binance WebSocket');
-      this.ws = new WebSocket(this.baseUrl);
+      this.logger.log(`Subscribing to klines for ${symbol} with interval ${interval}`);
+      
+      const handler = this.client.ws.candles(symbol, interval, candle => {
+        this.eventEmitter.emit(id, {
+          symbol: candle.symbol,
+          interval,
+          openTime: candle.startTime,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+          closeTime: candle.closeTime,
+          quoteAssetVolume: candle.quoteVolume,
+          trades: candle.trades,
+          // Use the correct property names from the Candle type
+          buyBaseAssetVolume: candle.buyVolume || '0',
+          buyQuoteAssetVolume: candle.quoteBuyVolume || '0',
+        });
+      });
 
-      this.ws.on('open', () => {
-        this.logger.log('Connected to Binance WebSocket');
-        this.isConnected = true;
-        this.reconnectAttempts = 0;
-        
-        // Resubscribe to previous streams if any
-        if (this.subscriptions.length > 0) {
-          this.subscribeToStreams(this.subscriptions);
-        }
+      // Store the original handler for cleanup later
+      this.wsHandlers.set(id, handler);
 
-        // Start ping interval to keep connection alive
-        this.pingInterval = setInterval(() => {
-          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-            this.ws.ping();
+      const subscription: StreamSubscription = {
+        id,
+        unsubscribe: () => {
+          // Call the handler function directly
+          const wsHandler = this.wsHandlers.get(id);
+          if (wsHandler) {
+            if (typeof wsHandler === 'function') {
+              wsHandler();
+            } else if (wsHandler instanceof Promise) {
+              wsHandler.then(h => {
+                if (typeof h === 'function') {
+                  h();
+                }
+              }).catch(err => {
+                this.logger.error(`Error unsubscribing from ${id}: ${err.message}`);
+              });
+            }
+            this.wsHandlers.delete(id);
           }
-        }, 30000);
-      });
-
-      this.ws.on('message', (data: WebSocket.Data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          
-          // Handle different message types
-          if (message.e) {
-            const eventType = message.e;
-            this.eventEmitter.emit(`binance.${eventType}`, message);
-          }
-        } catch (error) {
-          this.logger.error('Error parsing WebSocket message', error);
         }
-      });
-
-      this.ws.on('error', (error) => {
-        this.logger.error('Binance WebSocket error', error);
-      });
-
-      this.ws.on('close', (code, reason) => {
-        this.logger.warn(`Binance WebSocket closed: ${code} - ${reason}`);
-        this.isConnected = false;
-        this.cleanup();
-        this.scheduleReconnect();
-      });
-
+      };
+      
+      this.subscriptions.set(id, subscription);
+      return subscription;
     } catch (error) {
-      this.logger.error('Failed to connect to Binance WebSocket', error);
-      this.scheduleReconnect();
-    }
-  }
-
-  private cleanup() {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
-
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-
-    if (this.ws) {
-      this.ws = null;
-    }
-  }
-
-  private scheduleReconnect() {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1);
-      
-      this.logger.log(`Scheduling reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
-      
-      this.reconnectTimeout = setTimeout(() => {
-        this.connect();
-      }, delay);
-    } else {
-      this.logger.error('Max reconnect attempts reached, giving up');
-    }
-  }
-
-  private disconnect() {
-    this.logger.log('Disconnecting from Binance WebSocket');
-    
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.close();
-    }
-    
-    this.cleanup();
-  }
-
-  private subscribeToStreams(streams: string[]) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.logger.warn('Cannot subscribe: WebSocket not connected');
-      return;
-    }
-
-    const subscribeMessage = {
-      method: 'SUBSCRIBE',
-      params: streams,
-      id: Date.now(),
-    };
-
-    this.ws.send(JSON.stringify(subscribeMessage));
-  }
-
-  private unsubscribeFromStreams(streams: string[]) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.logger.warn('Cannot unsubscribe: WebSocket not connected');
-      return;
-    }
-
-    const unsubscribeMessage = {
-      method: 'UNSUBSCRIBE',
-      params: streams,
-      id: Date.now(),
-    };
-
-    this.ws.send(JSON.stringify(unsubscribeMessage));
-  }
-
-  /**
-   * Subscribe to a specific symbol candlestick stream
-   */
-  subscribeToKline(symbol: string, interval: string) {
-    const stream = `${symbol.toLowerCase()}@kline_${interval}`;
-    
-    if (!this.subscriptions.includes(stream)) {
-      this.subscriptions.push(stream);
-      
-      if (this.isConnected) {
-        this.subscribeToStreams([stream]);
-      }
+      this.logger.error(`Error subscribing to klines: ${error.message}`, error.stack);
+      throw error;
     }
   }
 
   /**
-   * Subscribe to a specific symbol mini ticker stream
+   * Subscribe to ticker updates for a symbol
    */
-  subscribeToMiniTicker(symbol: string) {
-    const stream = `${symbol.toLowerCase()}@miniTicker`;
+  public subscribeToTicker(symbol: string): StreamSubscription {
+    const id = `ticker_${symbol.toLowerCase()}`;
     
-    if (!this.subscriptions.includes(stream)) {
-      this.subscriptions.push(stream);
+    if (this.subscriptions.has(id)) {
+      return this.subscriptions.get(id);
+    }
+
+    try {
+      this.logger.log(`Subscribing to ticker for ${symbol}`);
+
+      const handler = this.client.ws.ticker(symbol, ticker => {
+        this.eventEmitter.emit(id, ticker);
+      });
+
+      // Store the original handler for cleanup later
+      this.wsHandlers.set(id, handler);
+
+      const subscription: StreamSubscription = {
+        id,
+        unsubscribe: () => {
+          // Call the handler function directly
+          const wsHandler = this.wsHandlers.get(id);
+          if (wsHandler) {
+            if (typeof wsHandler === 'function') {
+              wsHandler();
+            } else if (wsHandler instanceof Promise) {
+              wsHandler.then(h => {
+                if (typeof h === 'function') {
+                  h();
+                }
+              }).catch(err => {
+                this.logger.error(`Error unsubscribing from ${id}: ${err.message}`);
+              });
+            }
+            this.wsHandlers.delete(id);
+          }
+        }
+      };
       
-      if (this.isConnected) {
-        this.subscribeToStreams([stream]);
-      }
+      this.subscriptions.set(id, subscription);
+      return subscription;
+    } catch (error) {
+      this.logger.error(`Error subscribing to ticker: ${error.message}`, error.stack);
+      throw error;
     }
   }
 
   /**
-   * Subscribe to all market mini tickers stream
+   * Subscribe to all market mini tickers
    */
-  subscribeToAllMiniTickers() {
-    const stream = '!miniTicker@arr';
+  public subscribeToAllMiniTickers(): StreamSubscription {
+    const id = 'allMiniTickers';
     
-    if (!this.subscriptions.includes(stream)) {
-      this.subscriptions.push(stream);
+    if (this.subscriptions.has(id)) {
+      return this.subscriptions.get(id);
+    }
+
+    try {
+      this.logger.log('Subscribing to all mini tickers');
+
+      // The miniTicker method requires a callback function for the second parameter
+      const handler = this.client.ws.miniTicker(
+        null, // First parameter is symbol (null for all symbols)
+        tickers => {
+          this.eventEmitter.emit(id, tickers);
+        }
+      );
+
+      // Store the original handler for cleanup later
+      this.wsHandlers.set(id, handler);
+
+      const subscription: StreamSubscription = {
+        id,
+        unsubscribe: () => {
+          // Handle the Promise properly
+          const wsHandler = this.wsHandlers.get(id);
+          if (wsHandler) {
+            if (typeof wsHandler === 'function') {
+              wsHandler();
+            } else if (wsHandler instanceof Promise) {
+              wsHandler.then(h => {
+                if (typeof h === 'function') {
+                  h();
+                }
+              }).catch(err => {
+                this.logger.error(`Error unsubscribing from ${id}: ${err.message}`);
+              });
+            }
+            this.wsHandlers.delete(id);
+          }
+        }
+      };
       
-      if (this.isConnected) {
-        this.subscribeToStreams([stream]);
-      }
+      this.subscriptions.set(id, subscription);
+      return subscription;
+    } catch (error) {
+      this.logger.error(`Error subscribing to all mini tickers: ${error.message}`, error.stack);
+      throw error;
     }
   }
 
   /**
-   * Subscribe to a specific symbol book ticker stream
+   * Subscribe to user account updates (requires authentication)
    */
-  subscribeToBookTicker(symbol: string) {
-    const stream = `${symbol.toLowerCase()}@bookTicker`;
+  public subscribeToUserData(): StreamSubscription {
+    const id = 'userData';
     
-    if (!this.subscriptions.includes(stream)) {
-      this.subscriptions.push(stream);
+    if (this.subscriptions.has(id)) {
+      return this.subscriptions.get(id);
+    }
+
+    try {
+      this.logger.log('Subscribing to user data');
+
+      const handler = this.client.ws.user(data => {
+        this.eventEmitter.emit(id, data);
+      });
+
+      // Store the original handler for cleanup later
+      this.wsHandlers.set(id, handler);
+
+      const subscription: StreamSubscription = {
+        id,
+        unsubscribe: () => {
+          // Handle the Promise properly
+          const wsHandler = this.wsHandlers.get(id);
+          if (wsHandler) {
+            if (typeof wsHandler === 'function') {
+              wsHandler();
+            } else if (wsHandler instanceof Promise) {
+              wsHandler.then(h => {
+                if (typeof h === 'function') {
+                  h();
+                }
+              }).catch(err => {
+                this.logger.error(`Error unsubscribing from ${id}: ${err.message}`);
+              });
+            }
+            this.wsHandlers.delete(id);
+          }
+        }
+      };
       
-      if (this.isConnected) {
-        this.subscribeToStreams([stream]);
-      }
+      this.subscriptions.set(id, subscription);
+      return subscription;
+    } catch (error) {
+      this.logger.error(`Error subscribing to user data: ${error.message}`, error.stack);
+      throw error;
     }
   }
 
   /**
-   * Subscribe to a specific symbol partial book depth stream
+   * Register event listener for a specific subscription
    */
-  subscribeToPartialBookDepth(symbol: string, level: 5 | 10 | 20) {
-    const stream = `${symbol.toLowerCase()}@depth${level}`;
-    
-    if (!this.subscriptions.includes(stream)) {
-      this.subscriptions.push(stream);
-      
-      if (this.isConnected) {
-        this.subscribeToStreams([stream]);
-      }
+  public on(subscriptionId: string, listener: (data: any) => void): void {
+    this.eventEmitter.on(subscriptionId, listener);
+  }
+
+  /**
+   * Remove event listener for a specific subscription
+   */
+  public off(subscriptionId: string, listener: (data: any) => void): void {
+    this.eventEmitter.off(subscriptionId, listener);
+  }
+
+  /**
+   * Unsubscribe from a specific data stream
+   */
+  public unsubscribe(subscriptionId: string): boolean {
+    const subscription = this.subscriptions.get(subscriptionId);
+    if (subscription) {
+      subscription.unsubscribe();
+      this.subscriptions.delete(subscriptionId);
+      this.eventEmitter.removeAllListeners(subscriptionId);
+      this.logger.log(`Unsubscribed from ${subscriptionId}`);
+      return true;
     }
+    return false;
   }
 
   /**
-   * Unsubscribe from a specific stream
+   * Unsubscribe from all data streams
    */
-  unsubscribe(stream: string) {
-    const index = this.subscriptions.indexOf(stream);
-    
-    if (index !== -1) {
-      this.subscriptions.splice(index, 1);
-      
-      if (this.isConnected) {
-        this.unsubscribeFromStreams([stream]);
-      }
+  public unsubscribeAll(): void {
+    for (const [id, subscription] of this.subscriptions.entries()) {
+      subscription.unsubscribe();
+      this.eventEmitter.removeAllListeners(id);
     }
-  }
-
-  /**
-   * Get current subscription list
-   */
-  getSubscriptions(): string[] {
-    return [...this.subscriptions];
-  }
-
-  /**
-   * Check if connection is established
-   */
-  isConnectedToWebSocket(): boolean {
-    return this.isConnected;
+    this.subscriptions.clear();
+    this.wsHandlers.clear();
+    this.logger.log('Unsubscribed from all streams');
   }
 }

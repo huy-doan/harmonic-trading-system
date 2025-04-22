@@ -3,6 +3,55 @@ import { IsString, IsNumber, IsOptional, IsInt, Min, IsPositive, IsDateString } 
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
+export enum TimeframeEnum {
+  ONE_MINUTE = '1m',
+  THREE_MINUTES = '3m',
+  FIVE_MINUTES = '5m',
+  FIFTEEN_MINUTES = '15m',
+  THIRTY_MINUTES = '30m',
+  ONE_HOUR = '1h',
+  TWO_HOURS = '2h',
+  FOUR_HOURS = '4h',
+  ONE_DAY = '1d',
+  ONE_WEEK = '1w',
+  ONE_MONTH = '1M'
+}
+
+export class TrendAnalysisResultDto {
+  @ApiProperty({ description: 'Trading symbol (e.g., BTCUSDT)' })
+  @IsString()
+  symbol: string;
+
+  @ApiProperty({ description: 'Timeframe used for analysis', enum: TimeframeEnum })
+  @IsString()
+  timeframe: string;
+
+  @ApiProperty({ description: 'Identified trend direction', enum: ['UPTREND', 'DOWNTREND', 'SIDEWAYS'] })
+  @IsString()
+  trendDirection: 'UPTREND' | 'DOWNTREND' | 'SIDEWAYS';
+
+  @ApiProperty({ description: 'Trend strength (0-100)' })
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  strength: number;
+
+  @ApiProperty({ description: 'Key support levels', type: [Number] })
+  @IsNumber({}, { each: true })
+  @Type(() => Number)
+  supportLevels: number[];
+
+  @ApiProperty({ description: 'Key resistance levels', type: [Number] })
+  @IsNumber({}, { each: true })
+  @Type(() => Number)
+  resistanceLevels: number[];
+  
+  @ApiProperty({ description: 'Analysis timestamp' })
+  @IsNumber()
+  @Type(() => Number)
+  timestamp: number;
+}
+
 export class CandlestickDto {
   @ApiProperty({ description: 'Trading symbol (e.g., BTCUSDT)' })
   @IsString()

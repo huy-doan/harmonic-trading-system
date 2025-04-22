@@ -3,6 +3,8 @@
  * Binance API type definitions
  */
 
+import { CandleChartInterval } from 'binance-api-node';
+
 /**
  * Kline/Candlestick data format from Binance API
  */
@@ -237,4 +239,83 @@ export interface BinanceKline {
     IOC = 'IOC', // Immediate or cancel
     FOK = 'FOK'  // Fill or kill
   }
-  
+
+export interface MarketData {
+  symbol: string;
+  price: string;
+  timestamp: number;
+  volume?: string;
+}
+
+export interface CandleData {
+  symbol: string;
+  interval: CandleChartInterval;
+  openTime: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  closeTime: number;
+  quoteAssetVolume: string;
+  trades: number;
+  buyBaseAssetVolume: string;
+  buyQuoteAssetVolume: string;
+}
+
+export interface TradeOrder {
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  type: 'LIMIT' | 'MARKET' | 'STOP_LOSS' | 'STOP_LOSS_LIMIT' | 'TAKE_PROFIT' | 'TAKE_PROFIT_LIMIT' | 'LIMIT_MAKER';
+  quantity: string;
+  price?: string;
+  timeInForce?: 'GTC' | 'IOC' | 'FOK';
+  stopPrice?: string;
+}
+
+export interface AccountInfo {
+  balances: {
+    asset: string;
+    free: string;
+    locked: string;
+  }[];
+}
+
+export interface StreamSubscription {
+  id: string;
+  unsubscribe: () => void;
+}
+
+export interface BinanceCredentials {
+  apiKey: string;
+  apiSecret: string;
+}
+
+export type SymbolPrice = {
+  symbol: string;
+  price: string;
+};
+
+export type TickerData = {
+  symbol: string;
+  priceChange: string;
+  priceChangePercent: string;
+  weightedAvgPrice: string;
+  prevClosePrice: string;
+  lastPrice: string;
+  lastQty: string;
+  bidPrice: string;
+  bidQty: string;
+  askPrice: string;
+  askQty: string;
+  openPrice: string;
+  highPrice: string;
+  lowPrice: string;
+  volume: string;
+  quoteVolume: string;
+  openTime: number;
+  closeTime: number;
+  firstId: number;
+  lastId: number;
+  count: number;
+};

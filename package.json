@@ -42,6 +42,7 @@
     "@types/ws": "^8.18.1",
     "axios": "^1.8.4",
     "bcrypt": "^5.1.1",
+    "binance-api-node": "^0.12.9",
     "bull": "^4.16.5",
     "cache-manager": "^6.4.2",
     "cache-manager-redis-store": "^3.0.1",

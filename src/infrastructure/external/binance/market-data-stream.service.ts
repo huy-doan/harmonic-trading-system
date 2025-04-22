@@ -1,370 +1,370 @@
 // 058. src/infrastructure/external/binance/market-data-stream.service.ts
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import { BinanceWebsocketClient } from './binance-websocket.client';
-import { BinanceAdapter } from './binance.adapter';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Candlestick } from '@shared/interfaces/market-data.interface';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
-import { Inject } from '@nestjs/common';
-import { APP_CONSTANTS } from '@shared/constants/constants';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { BinanceAdapter } from './binance.adapter';
+import { BinanceApiClient } from './binance.client';
+import { BinanceWebsocketClient } from './binance-websocket.client';
+import { BinanceDataMapperService } from './binance-data-mapper.service';
+import { CandleData, MarketData, StreamSubscription } from './binance.types';
+import { CandleChartInterval } from 'binance-api-node';
+import { MarketData as MarketDataEntity } from '../../../domain/market-analysis/entities/market-data.entity';
 
 @Injectable()
-export class MarketDataStreamService implements OnModuleInit {
+export class MarketDataStreamService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MarketDataStreamService.name);
-  private readonly markets: Map<string, Map<string, Candlestick[]>> = new Map();
-  private readonly symbols: string[] = [];
-  private readonly timeframes: string[] = [];
+  private readonly activeStreams: Map<string, StreamSubscription> = new Map();
+  private readonly marketDataCache: Map<string, MarketData> = new Map();
+  private readonly candlesCache: Map<string, CandleData[]> = new Map();
+  private readonly marketDataEntityCache: Map<string, MarketDataEntity[]> = new Map();
+  private readonly watchedSymbols: Set<string> = new Set();
+  private readonly watchedIntervals: Set<CandleChartInterval> = new Set();
 
   constructor(
     private readonly configService: ConfigService,
+    private readonly binanceClient: BinanceApiClient,
     private readonly binanceWebsocketClient: BinanceWebsocketClient,
     private readonly binanceAdapter: BinanceAdapter,
-    private readonly eventEmitter: EventEmitter2,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
-  ) {
-    // Initialize with some default values from environment or constants
-    this.timeframes = Object.values(APP_CONSTANTS.TIMEFRAMES);
-  }
+    private readonly binanceDataMapper: BinanceDataMapperService,
+    private readonly eventEmitter: EventEmitter2
+  ) {}
 
   async onModuleInit() {
-    // Load initial symbols from configuration or use defaults
-    await this.initializeMarkets();
+    const apiKey = this.configService.get<string>('BINANCE_API_KEY');
+    const apiSecret = this.configService.get<string>('BINANCE_API_SECRET');
 
-    // Subscribe to WebSocket streams for active symbols and timeframes
-    this.subscribeToMarketStreams();
+    // Initialize clients
+    this.binanceClient.initialize({ apiKey, apiSecret });
+    this.binanceWebsocketClient.initialize({ apiKey, apiSecret });
+
+    // Load default symbols and intervals from config
+    const defaultSymbols = this.configService.get<string[]>('DEFAULT_WATCHED_SYMBOLS', ['BTCUSDT', 'ETHUSDT']);
+    const defaultIntervals = this.configService.get<CandleChartInterval[]>('DEFAULT_WATCHED_INTERVALS', [
+      '1m', '5m', '15m', '1h', '4h', '1d'
+    ] as CandleChartInterval[]);
+
+    // Set up initial data streams
+    for (const symbol of defaultSymbols) {
+      this.watchSymbol(symbol);
+    }
+
+    for (const interval of defaultIntervals) {
+      this.watchInterval(interval);
+    }
+
+    // Refresh market data every minute
+    setInterval(() => this.refreshMarketData(), 60000);
+
+    this.logger.log('Market data stream service initialized');
+  }
+
+  async onModuleDestroy() {
+    this.stopAllStreams();
+    this.logger.log('Market data stream service destroyed');
   }
 
   /**
-   * Initialize market data for configured symbols and timeframes
+   * Get the latest market data for a symbol
    */
-  private async initializeMarkets() {
-    try {
-      // Get symbol list from environment or use defaults
-      const configuredSymbols = this.configService.get<string>('SYMBOLS');
-      
-      if (configuredSymbols) {
-        this.symbols.push(...configuredSymbols.split(','));
-      } else {
-        // Default symbols if not configured
-        this.symbols.push('BTCUSDT', 'ETHUSDT', 'BNBUSDT');
-      }
-
-      this.logger.log(`Initializing markets for symbols: ${this.symbols.join(', ')}`);
-
-      // Initialize data structure for each symbol and timeframe
-      for (const symbol of this.symbols) {
-        this.markets.set(symbol, new Map());
-        
-        for (const timeframe of this.timeframes) {
-          // Fetch initial historical data
-          const candles = await this.binanceAdapter.getCandlesticks(symbol, timeframe, {
-            limit: 1000 // Get maximum allowed candles
-          });
-          
-          this.markets.get(symbol).set(timeframe, candles);
-          
-          // Cache the data
-          await this.cacheMarketData(symbol, timeframe, candles);
-          
-          this.logger.debug(`Loaded ${candles.length} historical candles for ${symbol} ${timeframe}`);
-        }
-      }
-
-      this.logger.log('Market data initialization completed');
-    } catch (error) {
-      this.logger.error('Failed to initialize markets', error);
-    }
+  public getMarketData(symbol: string): MarketData | undefined {
+    return this.marketDataCache.get(symbol);
   }
 
   /**
-   * Subscribe to WebSocket streams for active symbols and timeframes
+   * Get all cached market data
    */
-  private subscribeToMarketStreams() {
-    for (const symbol of this.symbols) {
-      for (const timeframe of this.timeframes) {
-        // Only subscribe to certain timeframes for real-time data
-        // For higher timeframes, we'll aggregate from lower timeframes
-        if (['1m', '5m', '15m', '30m', '1h'].includes(timeframe)) {
-          this.binanceWebsocketClient.subscribeToKline(symbol, timeframe);
-          this.logger.debug(`Subscribed to ${symbol} ${timeframe} kline stream`);
-        }
-      }
-      
-      // Subscribe to mini ticker for price updates
-      this.binanceWebsocketClient.subscribeToMiniTicker(symbol);
-      this.logger.debug(`Subscribed to ${symbol} mini ticker stream`);
-    }
+  public getAllMarketData(): MarketData[] {
+    return Array.from(this.marketDataCache.values());
   }
 
   /**
-   * Handle kline events from WebSocket
+   * Get candlestick data for a symbol and interval
    */
-  @OnEvent('binance.kline')
-  handleKlineEvent(data: any) {
-    try {
-      const { s: symbol, k } = data;
-      const { t: openTime, T: closeTime, i: interval, o, h, l, c, v, n, V, Q } = k;
-      
-      // Create candlestick from the event data
-      const candlestick: Candlestick = {
-        symbol,
-        timeframe: interval,
-        openTime,
-        open: parseFloat(o),
-        high: parseFloat(h),
-        low: parseFloat(l),
-        close: parseFloat(c),
-        volume: parseFloat(v),
-        closeTime,
-        quoteAssetVolume: parseFloat(Q),
-        numberOfTrades: n,
-        takerBuyBaseAssetVolume: parseFloat(V),
-        takerBuyQuoteAssetVolume: 0, // Not directly provided in the event
-      };
-
-      // Update in-memory data
-      this.updateCandlestickData(symbol, interval, candlestick);
-      
-      // Emit event for pattern detection
-      this.eventEmitter.emit('market.candlestick.update', {
-        symbol,
-        timeframe: interval,
-        candlestick,
-        isComplete: data.k.x // Is this kline closed?
-      });
-      
-      // If candle is complete, cache the updated data
-      if (data.k.x) {
-        this.cacheMarketData(symbol, interval, this.markets.get(symbol)?.get(interval) || []);
-      }
-    } catch (error) {
-      this.logger.error('Error handling kline event', error);
-    }
+  public getCandleData(symbol: string, interval: CandleChartInterval): CandleData[] | undefined {
+    const key = `${symbol}_${interval}`;
+    return this.candlesCache.get(key);
   }
 
   /**
-   * Handle mini ticker events from WebSocket
+   * Get market data entities for a symbol and interval
+   * This method uses the data mapper to convert the raw Binance candle data to MarketDataEntity format
    */
-  @OnEvent('binance.24hrMiniTicker')
-  handleMiniTickerEvent(data: any) {
-    try {
-      const { s: symbol, c: close, o: open, h: high, l: low, v: volume } = data;
-      
-      // Emit price update event
-      this.eventEmitter.emit('market.price.update', {
-        symbol,
-        price: parseFloat(close),
-        open: parseFloat(open),
-        high: parseFloat(high),
-        low: parseFloat(low),
-        volume: parseFloat(volume),
-        timestamp: Date.now()
-      });
-    } catch (error) {
-      this.logger.error('Error handling mini ticker event', error);
-    }
-  }
-
-  /**
-   * Update candlestick data in memory
-   */
-  private updateCandlestickData(symbol: string, timeframe: string, candlestick: Candlestick) {
-    // Get the candlestick array for this symbol and timeframe
-    const symbolMap = this.markets.get(symbol);
-    if (!symbolMap) {
-      this.markets.set(symbol, new Map([[timeframe, [candlestick]]]));
-      return;
-    }
-
-    const candles = symbolMap.get(timeframe);
-    if (!candles) {
-      symbolMap.set(timeframe, [candlestick]);
-      return;
-    }
-
-    // Find if we already have this candle (by open time)
-    const existingIndex = candles.findIndex(c => c.openTime === candlestick.openTime);
+  public getMarketDataEntities(symbol: string, interval: CandleChartInterval): MarketDataEntity[] | undefined {
+    const key = `${symbol}_${interval}`;
+    const candles = this.candlesCache.get(key);
     
-    if (existingIndex >= 0) {
-      // Update existing candle
-      candles[existingIndex] = candlestick;
-    } else {
-      // Add new candle and maintain sorted order
-      candles.push(candlestick);
+    if (!candles) {
+      return undefined;
+    }
+    
+    // Check if we already have converted entities in the cache
+    let entities = this.marketDataEntityCache.get(key);
+    
+    // If not in cache or cache is stale, convert the candles to entities
+    if (!entities || entities.length !== candles.length) {
+      entities = this.binanceDataMapper.mapCandlesToMarketData(candles);
+      this.marketDataEntityCache.set(key, entities);
+    }
+    
+    return entities;
+  }
+
+  /**
+   * Get the latest market data entity for a symbol and interval
+   */
+  public getLatestMarketDataEntity(symbol: string, interval: CandleChartInterval): MarketDataEntity | undefined {
+    const entities = this.getMarketDataEntities(symbol, interval);
+    
+    if (!entities || entities.length === 0) {
+      return undefined;
+    }
+    
+    // Return the most recent candle (last in the array)
+    return entities[entities.length - 1];
+  }
+
+  /**
+   * Watch a symbol for price updates
+   */
+  public watchSymbol(symbol: string): void {
+    if (this.watchedSymbols.has(symbol)) {
+      return;
+    }
+
+    this.watchedSymbols.add(symbol);
+    this.logger.log(`Watching symbol: ${symbol}`);
+
+    // Subscribe to ticker updates
+    const subscription = this.binanceWebsocketClient.subscribeToTicker(symbol);
+    const streamId = `ticker_${symbol.toLowerCase()}`;
+    this.activeStreams.set(streamId, subscription);
+
+    // Set up event listener
+    this.binanceWebsocketClient.on(streamId, (ticker) => {
+      const marketData = this.binanceAdapter.transformTickerData(ticker);
+      this.marketDataCache.set(symbol, marketData);
+      this.eventEmitter.emit('market.update', marketData);
+    });
+
+    // Initialize with REST API data
+    this.fetchInitialMarketData(symbol);
+  }
+
+  /**
+   * Watch a symbol with a specific interval for candlestick updates
+   */
+  public watchSymbolWithInterval(symbol: string, interval: CandleChartInterval): void {
+    if (!this.watchedSymbols.has(symbol)) {
+      this.watchSymbol(symbol);
+    }
+
+    if (!this.watchedIntervals.has(interval)) {
+      this.watchInterval(interval);
+    }
+
+    const key = `${symbol}_${interval}`;
+    if (this.activeStreams.has(key)) {
+      return;
+    }
+
+    this.logger.log(`Watching ${symbol} with interval ${interval}`);
+
+    // Subscribe to kline updates
+    const subscription = this.binanceWebsocketClient.subscribeToKlines(symbol, interval);
+    this.activeStreams.set(key, subscription);
+
+    // Set up event listener with entity conversion
+    this.binanceWebsocketClient.on(subscription.id, (candle) => {
+      const candleData = this.binanceAdapter.transformWsKlineData(candle);
+      const cacheKey = `${symbol}_${interval}`;
+      
+      // Update cache
+      let candles = this.candlesCache.get(cacheKey) || [];
+      
+      // Find and replace existing candle with the same openTime, or add to the end
+      const existingIndex = candles.findIndex(c => c.openTime === candleData.openTime);
+      if (existingIndex >= 0) {
+        candles[existingIndex] = candleData;
+      } else {
+        candles.push(candleData);
+        // Keep only the last 1000 candles
+        if (candles.length > 1000) {
+          candles = candles.slice(-1000);
+        }
+      }
+      
+      // Sort by openTime
       candles.sort((a, b) => a.openTime - b.openTime);
       
-      // Keep only the last 1000 candles to limit memory usage
-      if (candles.length > 1000) {
-        candles.shift();
-      }
-    }
-  }
-
-  /**
-   * Cache market data in Redis
-   */
-  private async cacheMarketData(symbol: string, timeframe: string, candles: Candlestick[]) {
-    try {
-      const cacheKey = `market:${symbol}:${timeframe}`;
-      await this.cacheManager.set(cacheKey, candles, 3600000); // Cache for 1 hour
-    } catch (error) {
-      this.logger.error(`Failed to cache market data for ${symbol} ${timeframe}`, error);
-    }
-  }
-
-  /**
-   * Get candlestick data for a symbol and timeframe
-   */
-  async getCandlesticks(symbol: string, timeframe: string, limit: number = 100): Promise<Candlestick[]> {
-    try {
-      // Check cache first
-      const cacheKey = `market:${symbol}:${timeframe}`;
-      const cachedData = await this.cacheManager.get<Candlestick[]>(cacheKey);
+      this.candlesCache.set(cacheKey, candles);
       
-      if (cachedData && cachedData.length >= limit) {
-        return cachedData.slice(-limit);
-      }
+      // Convert the updated candle to entity format and emit events
+      const marketDataEntity = this.binanceDataMapper.mapCandleToMarketData(candleData);
       
-      // If not in cache or not enough data, get from in-memory data
-      const symbolMap = this.markets.get(symbol);
-      if (symbolMap) {
-        const candles = symbolMap.get(timeframe);
-        if (candles && candles.length >= limit) {
-          return candles.slice(-limit);
+      // Update entity cache
+      let entities = this.marketDataEntityCache.get(cacheKey) || [];
+      const entityIndex = entities.findIndex(e => e.openTime === marketDataEntity.openTime);
+      if (entityIndex >= 0) {
+        entities[entityIndex] = marketDataEntity;
+      } else {
+        entities.push(marketDataEntity);
+        if (entities.length > 1000) {
+          entities = entities.slice(-1000);
         }
       }
       
-      // If still not enough data, fetch from API
-      const candles = await this.binanceAdapter.getCandlesticks(symbol, timeframe, { limit });
+      entities.sort((a, b) => a.openTime - b.openTime);
+      this.marketDataEntityCache.set(cacheKey, entities);
       
-      // Update in-memory data and cache
-      if (candles.length > 0) {
-        this.updateMarketData(symbol, timeframe, candles);
-        await this.cacheMarketData(symbol, timeframe, candles);
-      }
-      
-      return candles;
-    } catch (error) {
-      this.logger.error(`Failed to get candlesticks for ${symbol} ${timeframe}`, error);
-      throw error;
+      // Emit events for both formats
+      this.eventEmitter.emit('candle.update', candleData);
+      this.eventEmitter.emit('market.data.update', marketDataEntity);
+    });
+
+    // Initialize with REST API data
+    this.fetchInitialCandleData(symbol, interval);
+  }
+
+  /**
+   * Watch an interval for all watched symbols
+   */
+  public watchInterval(interval: CandleChartInterval): void {
+    if (this.watchedIntervals.has(interval)) {
+      return;
+    }
+
+    this.watchedIntervals.add(interval);
+    this.logger.log(`Watching interval: ${interval}`);
+
+    // Set up streams for all watched symbols with this interval
+    for (const symbol of this.watchedSymbols) {
+      this.watchSymbolWithInterval(symbol, interval);
     }
   }
 
   /**
-   * Get historical candlestick data for a symbol and timeframe
+   * Stop watching a symbol
    */
-  async getHistoricalCandlesticks(
-    symbol: string,
-    timeframe: string,
-    startTime: Date,
-    endTime: Date = new Date()
-  ): Promise<Candlestick[]> {
+  public unwatchSymbol(symbol: string): void {
+    if (!this.watchedSymbols.has(symbol)) {
+      return;
+    }
+
+    this.watchedSymbols.delete(symbol);
+    this.logger.log(`Stopped watching symbol: ${symbol}`);
+
+    // Unsubscribe from ticker
+    const tickerStreamId = `ticker_${symbol.toLowerCase()}`;
+    if (this.activeStreams.has(tickerStreamId)) {
+      this.binanceWebsocketClient.unsubscribe(tickerStreamId);
+      this.activeStreams.delete(tickerStreamId);
+    }
+
+    // Unsubscribe from all intervals for this symbol
+    for (const interval of this.watchedIntervals) {
+      const key = `${symbol}_${interval}`;
+      const streamKey = `kline_${symbol.toLowerCase()}_${interval}`;
+      
+      if (this.activeStreams.has(streamKey)) {
+        this.binanceWebsocketClient.unsubscribe(streamKey);
+        this.activeStreams.delete(streamKey);
+      }
+      
+      this.candlesCache.delete(key);
+    }
+
+    // Remove from cache
+    this.marketDataCache.delete(symbol);
+  }
+
+  /**
+   * Stop watching an interval
+   */
+  public unwatchInterval(interval: CandleChartInterval): void {
+    if (!this.watchedIntervals.has(interval)) {
+      return;
+    }
+
+    this.watchedIntervals.delete(interval);
+    this.logger.log(`Stopped watching interval: ${interval}`);
+
+    // Unsubscribe from all symbols for this interval
+    for (const symbol of this.watchedSymbols) {
+      const key = `${symbol}_${interval}`;
+      const streamKey = `kline_${symbol.toLowerCase()}_${interval}`;
+      
+      if (this.activeStreams.has(streamKey)) {
+        this.binanceWebsocketClient.unsubscribe(streamKey);
+        this.activeStreams.delete(streamKey);
+      }
+      
+      this.candlesCache.delete(key);
+    }
+  }
+
+  /**
+   * Stop all active streams
+   */
+  public stopAllStreams(): void {
+    this.binanceWebsocketClient.unsubscribeAll();
+    this.activeStreams.clear();
+    this.logger.log('Stopped all data streams');
+  }
+
+  /**
+   * Fetch initial market data for a symbol using the REST API
+   */
+  private async fetchInitialMarketData(symbol: string): Promise<void> {
     try {
-      return await this.binanceAdapter.getHistoricalCandlesticks(
+      const ticker = await this.binanceClient.getTicker24hr(symbol) as any;
+      const marketData = this.binanceAdapter.transformTickerData(ticker);
+      this.marketDataCache.set(symbol, marketData);
+      this.eventEmitter.emit('market.update', marketData);
+    } catch (error) {
+      this.logger.error(`Error fetching initial market data for ${symbol}: ${error.message}`, error.stack);
+    }
+  }
+
+  /**
+   * Fetch initial candle data for a symbol and interval using the REST API
+   * Updated to also convert and cache the entity format
+   */
+  private async fetchInitialCandleData(symbol: string, interval: CandleChartInterval): Promise<void> {
+    try {
+      const candles = await this.binanceClient.getCandles(symbol, interval, { limit: 1000 });
+      const cacheKey = `${symbol}_${interval}`;
+      this.candlesCache.set(cacheKey, candles);
+      
+      // Convert candles to market data entities and cache them
+      const entities = this.binanceDataMapper.mapCandlesToMarketData(candles);
+      this.marketDataEntityCache.set(cacheKey, entities);
+      
+      // Emit event with the entity format for database persistence
+      this.eventEmitter.emit('market.candles.loaded', {
         symbol,
-        timeframe,
-        startTime,
-        endTime
-      );
+        interval,
+        entities
+      });
     } catch (error) {
-      this.logger.error(`Failed to get historical candlesticks for ${symbol} ${timeframe}`, error);
-      throw error;
+      this.logger.error(`Error fetching initial candle data for ${symbol}_${interval}: ${error.message}`, error.stack);
     }
   }
 
   /**
-   * Update market data with new candles
+   * Refresh market data for all watched symbols using the REST API
    */
-  private updateMarketData(symbol: string, timeframe: string, candles: Candlestick[]) {
-    if (!this.markets.has(symbol)) {
-      this.markets.set(symbol, new Map());
-    }
-    
-    this.markets.get(symbol).set(timeframe, candles);
-  }
-
-  /**
-   * Add a new symbol to track
-   */
-  async addSymbol(symbol: string): Promise<void> {
-    if (this.symbols.includes(symbol)) {
-      return; // Already tracking this symbol
-    }
-    
+  private async refreshMarketData(): Promise<void> {
     try {
-      this.symbols.push(symbol);
-      this.markets.set(symbol, new Map());
+      const symbols = Array.from(this.watchedSymbols);
       
-      // Initialize data for all timeframes
-      for (const timeframe of this.timeframes) {
-        const candles = await this.binanceAdapter.getCandlesticks(symbol, timeframe, { limit: 1000 });
-        this.markets.get(symbol).set(timeframe, candles);
-        await this.cacheMarketData(symbol, timeframe, candles);
-        
-        // Subscribe to kline stream for lower timeframes
-        if (['1m', '5m', '15m', '30m', '1h'].includes(timeframe)) {
-          this.binanceWebsocketClient.subscribeToKline(symbol, timeframe);
-        }
+      // Refresh in batches to avoid rate limits
+      const batchSize = 10;
+      for (let i = 0; i < symbols.length; i += batchSize) {
+        const batch = symbols.slice(i, i + batchSize);
+        await Promise.all(batch.map(symbol => this.fetchInitialMarketData(symbol)));
       }
-      
-      // Subscribe to mini ticker
-      this.binanceWebsocketClient.subscribeToMiniTicker(symbol);
-      
-      this.logger.log(`Added new symbol: ${symbol}`);
     } catch (error) {
-      this.logger.error(`Failed to add symbol ${symbol}`, error);
-      // Remove from symbols list if initialization failed
-      this.symbols.splice(this.symbols.indexOf(symbol), 1);
-      throw error;
+      this.logger.error(`Error refreshing market data: ${error.message}`, error.stack);
     }
-  }
-
-  /**
-   * Remove a symbol from tracking
-   */
-  removeSymbol(symbol: string): void {
-    const index = this.symbols.indexOf(symbol);
-    if (index === -1) {
-      return; // Not tracking this symbol
-    }
-    
-    // Unsubscribe from all streams for this symbol
-    for (const timeframe of this.timeframes) {
-      if (['1m', '5m', '15m', '30m', '1h'].includes(timeframe)) {
-        this.binanceWebsocketClient.unsubscribe(`${symbol.toLowerCase()}@kline_${timeframe}`);
-      }
-    }
-    
-    // Unsubscribe from mini ticker
-    this.binanceWebsocketClient.unsubscribe(`${symbol.toLowerCase()}@miniTicker`);
-    
-    // Remove from memory
-    this.symbols.splice(index, 1);
-    this.markets.delete(symbol);
-    
-    this.logger.log(`Removed symbol: ${symbol}`);
-  }
-
-  /**
-   * Get list of all tracked symbols
-   */
-  getSymbols(): string[] {
-    return [...this.symbols];
-  }
-
-  /**
-   * Get list of all available timeframes
-   */
-  getTimeframes(): string[] {
-    return [...this.timeframes];
-  }
-
-  /**
-   * Get latest price for a symbol
-   */
-  async getLatestPrice(symbol: string): Promise<number> {
-    return this.binanceAdapter.getLatestPrice(symbol);
   }
 }
