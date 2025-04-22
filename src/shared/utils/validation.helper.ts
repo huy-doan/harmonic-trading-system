@@ -81,4 +81,57 @@ export class ValidationHelper {
   static isValidTelegramChatId(chatId: string): boolean {
     return /^-?\d+$/.test(chatId);
   }
+
+  static isNumber(value: any): boolean {
+    return typeof value === 'number' && !isNaN(value) && isFinite(value);
+  }
+
+  static isPositiveNumber(value: any): boolean {
+    return this.isNumber(value) && value > 0;
+  }
+
+  static isNonNegativeNumber(value: any): boolean {
+    return this.isNumber(value) && value >= 0;
+  }
+
+  static isInteger(value: any): boolean {
+    return this.isNumber(value) && Number.isInteger(value);
+  }
+
+  static isPositiveInteger(value: any): boolean {
+    return this.isInteger(value) && value > 0;
+  }
+
+  static isValidEmail(email: string): boolean {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    return emailRegex.test(email);
+  }
+
+  static isValidUrl(url: string): boolean {
+    try {
+      new URL(url);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  static isValidCryptoSymbol(symbol: string): boolean {
+    const symbolRegex = /^[A-Z]{2,8}$/;
+    return symbolRegex.test(symbol);
+  }
+
+  static isValidCryptoPair(pair: string): boolean {
+    const pairRegex = /^[A-Z]{2,8}[A-Z]{2,5}$/;
+    return pairRegex.test(pair);
+  }
+
+  static isStrongPassword(password: string): boolean {
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()])[A-Za-z\d!@#$%^&*()]{8,}$/;
+    return passwordRegex.test(password);
+  }
+
+  static isValidApiKey(apiKey: string): boolean {
+    return /^[A-Za-z0-9]{16,}$/.test(apiKey);
+  }
 }
